@@ -6,3 +6,10 @@ numpy
 lmdb
 hydra-core
 mlflow
+
+pandas
+matplotlib
+tqdm
+PyYAML
+torchmetrics
+py

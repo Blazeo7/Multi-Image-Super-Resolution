@@ -4,7 +4,8 @@ mode: train
 defaults:
   - trainer: default
   - logger: mlflow
-  - model: unet        # configs/model/unet.yaml
+  - model: unet # configs/model/unet.yaml
+  - evaluator: default
   - _self_
 
 # TODO: dataset conf
