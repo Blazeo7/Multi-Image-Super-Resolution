@@ -1,0 +1,3 @@
+_target_: models.UNet.UNet
+num_classes: 5
+#TODO: add args
