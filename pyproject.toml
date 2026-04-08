@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "misr"
+version = "0.1.0"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "evaluator*",
+    "utils*",
+    "models*",
+    "losses*",
+    "metrics*",
+    "trainers*",
+]
+exclude = ["env*", "data*", "configs*", "scripts*"]

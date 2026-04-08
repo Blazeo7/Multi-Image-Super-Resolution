@@ -1,0 +1,28 @@
+paths:
+  base_save_dir: "evaluation_results"
+  vizulization_dir: "visualizations"
+
+hardware:
+  batch_size: 4
+  device: "cuda"
+
+visualization:
+  num_samples: 5
+  type: "metric" # Supported types: "metric", "in_order", "random"
+  order_by_metric: "psnr" # Metric to order by if type is "metric"
+  order_descending: true # Whether to order by metric in descending order
+
+  lr_show: 4 # number of LR images to show in the vizualization
+  lr_select: "random" # method to select LR images for vizualization: "first" or "random"
+  images_in_row: 4 # number of images to show in each row of the visualization
+
+metrics:
+  psnr:
+    compute: true
+  ssim:
+    compute: true
+  lpips:
+    compute: true
+    net_type: "alex" # options: "alex", "vgg", "squeeze"
+
+random_seed: 42
