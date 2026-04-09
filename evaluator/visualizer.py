@@ -1,14 +1,20 @@
+import logging
 import os
 import math
 import numpy as np
 import matplotlib.pyplot as plt
 from omegaconf import DictConfig
 
+from loggers.base_logger import BaseLogger
+
+log = logging.getLogger(__name__)
+
 
 class Visualizer:
-    def __init__(self, save_dir: str, cfg: DictConfig):
+    def __init__(self, save_dir: str, cfg: DictConfig, logger: BaseLogger):
         self.cfg = cfg
         self.viz_cfg = self.cfg.visualization
+        self.logger = logger
 
         self.viz_dir = os.path.join(save_dir, self.cfg.paths.vizulization_dir)
         os.makedirs(self.viz_dir, exist_ok=True)
@@ -27,7 +33,7 @@ class Visualizer:
             metrics: Per-sample dicts with PSNR, SSIM, LPIPS.
         """
 
-        print(f"Saving visualizations to {self.viz_dir}")
+        log.info(f"Saving visualizations to {self.viz_dir}")
 
         for idx, sample_idx in enumerate(indices):
             if sample_idx >= len(self.all_samples):
@@ -103,7 +109,9 @@ class Visualizer:
                 if self.viz_cfg.type == "metric"
                 else f"{self.viz_cfg.type}"
             )
-            out_path = os.path.join(self.viz_dir, f"{filename}_{idx +1}.png")
+
+            img_name = f"{filename}_{idx +1}.png"
+            out_path = os.path.join(self.viz_dir, img_name)
             plt.savefig(out_path, bbox_inches="tight", dpi=150)
             plt.close(fig)
 

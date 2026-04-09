@@ -7,8 +7,9 @@ from evaluator import Evaluator
 def main(cfg: DictConfig) -> None:
     model = hydra.utils.instantiate(cfg.model)
     dataset = hydra.utils.instantiate(cfg.dataset, split="test")
+    ml_logger = hydra.utils.instantiate(cfg.logger)
 
-    evaluator = Evaluator(model, dataset, cfg.evaluator)
+    evaluator = Evaluator(model, dataset, cfg=cfg.evaluator, logger=ml_logger)
     evaluator.run()
 
 

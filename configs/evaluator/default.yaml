@@ -1,5 +1,5 @@
 paths:
-  base_save_dir: "evaluation_results"
+  base_save_dir: ${hydra:runtime.output_dir}
   vizulization_dir: "visualizations"
 
 hardware:
