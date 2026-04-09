@@ -1,3 +1,4 @@
+import logging
 from omegaconf import DictConfig
 import torch
 import numpy as np
@@ -9,6 +10,8 @@ from torchmetrics.image import (
     StructuralSimilarityIndexMeasure as ssim,
     LearnedPerceptualImagePatchSimilarity as lpips,
 )
+
+log = logging.getLogger(__name__)
 
 
 class MetricTracker:
@@ -122,10 +125,9 @@ class MetricTracker:
         with open(json_path, "w") as f:
             json.dump(final_data, f, indent=4)
 
-        print(f"Results saved to {save_dir}")
+        log.info(f"Results saved to {save_dir}")
 
     def _print_final_scores(self, averages):
-        print("\nFinal Evaluation Results:")
+        log.info("Final Evaluation Results:")
         for k, v in averages.items():
-            print(f"{k}: {v:.4f}")
-        print()
+            log.info(f"{k}: {v:.4f}")

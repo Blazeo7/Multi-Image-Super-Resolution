@@ -1,4 +1,5 @@
 from datetime import datetime as dt
+import logging
 import os
 import numpy as np
 from omegaconf import DictConfig
@@ -9,49 +10,59 @@ from torch.utils.data import DataLoader
 from evaluator import InferenceEngine, MetricTracker, Visualizer
 from tqdm import tqdm
 
+from loggers.base_logger import BaseLogger
+
+log = logging.getLogger(__name__)
+
 
 class Evaluator:
-    def __init__(self, model: nn.Module, dataset: torch.utils.data.Dataset, cfg: DictConfig):
+    def __init__(
+        self,
+        model: nn.Module,
+        dataset: torch.utils.data.Dataset,
+        cfg: DictConfig,
+        logger: BaseLogger,
+    ):
         self.cfg = cfg
         self.setup_logging_directory(model, self.cfg.paths.base_save_dir)
+        self.logger = logger
 
         self.loader = DataLoader(dataset, batch_size=self.cfg.hardware.batch_size, shuffle=False)
         self.viz_count = self.cfg.visualization.num_samples
 
         self.inference = InferenceEngine(model, cfg)
         self.metrics = MetricTracker(cfg)
-        self.visualizer = Visualizer(self.model_eval_dir, cfg)
+        self.visualizer = Visualizer(self.model_eval_dir, cfg, logger)
 
     def setup_logging_directory(self, model: nn.Module, save_dir: str):
         model_name = model.__class__.__name__
-        timestamp = dt.now().strftime("%m%d_%H%M")
-        self.model_eval_dir = os.path.join(save_dir, f"{model_name}_{timestamp}")
+        self.model_eval_dir = os.path.join(save_dir, f"{model_name}")
         os.makedirs(self.model_eval_dir)
 
     def run(self):
         self.metrics.reset()
 
+        if self.logger:
+            self.logger.start()
+
         # Progress Bar
         pbar = tqdm(self.loader, desc="Evaluating", unit="batch")
 
-
-        for batch in pbar:
-            lr_stack, hr = batch
+        for i, (lr_stack, hr) in enumerate(pbar):
             sr = self.inference.forward(lr_stack)
-
             self.metrics.update(sr, hr)
             self.visualizer.add_batch(lr_stack, sr, hr)
 
-            # Update pbar postfix with running average
-            avg_metrics = self.metrics.compute_averages()
-            pbar.set_postfix(PSNR=f"{avg_metrics['PSNR']:.2f}")
+            pbar.set_postfix(PSNR=f"{self.metrics.compute_averages()['PSNR']:.2f}")
 
+        avg_metrics = self.metrics.compute_averages()
         self.metrics.save_metrics_csv(self.model_eval_dir)
+        self.logger._log_metrics(avg_metrics, step=0)
 
-        # Visualizations
         indices = self._get_indices_by_viz_type()
-        metrics_history = self.metrics.results_history
-        self.visualizer.save(indices, metrics_history)
+        self.visualizer.save(indices, self.metrics.results_history)
+
+        self.logger.finish()
 
         return avg_metrics
 
