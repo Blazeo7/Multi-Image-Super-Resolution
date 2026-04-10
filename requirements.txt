@@ -1,1 +1,10 @@
+opencv-python
+accelerate
 torch>=2.0.0
+torchvision
+numpy
+lmdb
+hydra-core
+mlflow
+datasets
+
