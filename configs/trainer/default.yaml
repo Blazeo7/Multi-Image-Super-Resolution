@@ -1,0 +1,15 @@
+max_epochs: 100
+max_steps: -1
+gradient_accumulation_steps: 1
+validation_interval: 1
+max_patience: 5
+save_max_score: false
+chkpt_interval: 1
+ckpt_dir: checkpoints
+resume_from: null
+step_on_batch: true
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.StepLR
+  step_size: 10
+  gamma: 0.1

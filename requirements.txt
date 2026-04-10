@@ -7,4 +7,8 @@ lmdb
 hydra-core
 mlflow
 datasets
-
+pandas
+matplotlib
+tqdm
+PyYAML
+torchmetrics
