@@ -2,10 +2,6 @@ paths:
   base_save_dir: ${hydra:runtime.output_dir}
   vizulization_dir: "visualizations"
 
-hardware:
-  batch_size: 4
-  device: "cuda"
-
 visualization:
   num_samples: 5
   type: "metric" # Supported types: "metric", "in_order", "random"

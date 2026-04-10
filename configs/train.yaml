@@ -1,0 +1,25 @@
+exp_name: default
+
+defaults:
+  - trainer: default # loads key/value.yaml -> trainer/default.yaml
+  - logger: mlflow
+  - model: unet
+  - _self_ # options from this file
+
+dataset:
+  _target_: data.datasets.dataset.MISRDataset
+  manifest: data/manifests/train.json
+
+dataloader:
+  batch_size: 16
+  num_workers: 4
+  shuffle: true
+  pin_memory: true
+
+optimizer:
+  _target_: torch.optim.Adam
+  lr: 1e-3
+  weight_decay: 1e-4
+
+loss:
+  _target_: torch.nn.MSELoss

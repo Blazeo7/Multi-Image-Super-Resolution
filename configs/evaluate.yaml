@@ -1,0 +1,10 @@
+exp_name: default_evaluate
+
+defaults:
+  - evaluator: default
+  - model: UNet
+  - dataset: test
+  - dataloader: default
+  - _self_
+
+checkpoint_path: "path/to/checkpoints"
