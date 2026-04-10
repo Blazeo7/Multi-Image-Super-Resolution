@@ -17,3 +17,6 @@ include = [
     "trainers*",
 ]
 exclude = ["env*", "data*", "configs*", "scripts*"]
+
+[tool.black]
+line-length = 120
