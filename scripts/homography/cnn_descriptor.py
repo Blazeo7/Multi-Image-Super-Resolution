@@ -1,6 +1,9 @@
-import torch
-import numpy as np
+# Author: Michal Hradiš
+# Adapted from: https://github.com/michal-hradis/mess_identification/
+
 import cv2
+import numpy as np
+import torch
 
 
 class LocalDescriptor:
