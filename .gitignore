@@ -178,3 +178,4 @@ pyrightconfig.json
 outputs/
 .DS_Store
 mlflow.db
+/data/raw/synthetic
