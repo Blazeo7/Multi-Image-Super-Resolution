@@ -1,15 +1,15 @@
-from datetime import datetime as dt
 import logging
 import os
+from datetime import datetime as dt
+
 import numpy as np
+import torch
 from omegaconf import DictConfig
 from torch import nn
-import torch
 from torch.utils.data import DataLoader
-
-from evaluator import InferenceEngine, MetricTracker, Visualizer
 from tqdm import tqdm
 
+from evaluator import InferenceEngine, MetricTracker, Visualizer
 from loggers.base_logger import BaseLogger
 
 log = logging.getLogger(__name__)
@@ -22,12 +22,13 @@ class Evaluator:
         dataset: torch.utils.data.Dataset,
         cfg: DictConfig,
         logger: BaseLogger,
+        loader: DataLoader,
     ):
         self.cfg = cfg
         self.setup_logging_directory(model, self.cfg.paths.base_save_dir)
         self.logger = logger
+        self.loader = loader
 
-        self.loader = DataLoader(dataset, batch_size=self.cfg.hardware.batch_size, shuffle=False)
         self.viz_count = self.cfg.visualization.num_samples
 
         self.inference = InferenceEngine(model, cfg)
@@ -37,7 +38,7 @@ class Evaluator:
     def setup_logging_directory(self, model: nn.Module, save_dir: str):
         model_name = model.__class__.__name__
         self.model_eval_dir = os.path.join(save_dir, f"{model_name}")
-        os.makedirs(self.model_eval_dir)
+        os.makedirs(self.model_eval_dir, exist_ok=True)
 
     def run(self):
         self.metrics.reset()
