@@ -1,7 +1,6 @@
 import hydra
 from accelerate import Accelerator
 from omegaconf import DictConfig
-from torch.utils.data import DataLoader
 
 # NOTE: if there will be more trainers, consider using hydra instantiation for them as well
 from trainers import BasicTrainer as Trainer
@@ -20,28 +19,14 @@ def main(cfg: DictConfig) -> None:
     train_dataset = hydra.utils.instantiate(cfg.dataset, split="train")
     val_dataset = hydra.utils.instantiate(cfg.dataset, split="dev")
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=cfg.dataset.batch_size,
-        shuffle=True,
-        num_workers=cfg.dataset.num_workers,
-        pin_memory=True,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=cfg.dataset.batch_size,
-        shuffle=False,
-        num_workers=cfg.dataset.num_workers,
-        pin_memory=True,
-    )
+    train_loader = hydra.utils.instantiate(cfg.dataloader, dataset=train_dataset)
+    val_loader = hydra.utils.instantiate(cfg.dataloader, dataset=val_dataset)
 
     optimizer = hydra.utils.instantiate(cfg.optimizer, params=model.parameters())
 
     loss_fn = hydra.utils.instantiate(cfg.loss)
 
-    model, optimizer, train_loader, val_loader = accelerator.prepare(
-        model, optimizer, train_loader, val_loader
-    )
+    model, optimizer, train_loader, val_loader = accelerator.prepare(model, optimizer, train_loader, val_loader)
 
     trainer = Trainer(
         accelerator=accelerator,
