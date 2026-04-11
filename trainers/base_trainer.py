@@ -1,3 +1,4 @@
+import inspect
 import os
 from pathlib import Path
 from typing import Optional
@@ -51,18 +52,20 @@ class Trainer:
 
     def _instantiate_lr_scheduler(self, total_steps):
         scheduler_cfg = self.cfg.scheduler
-        try:
-            return hydra.utils.instantiate(
-                scheduler_cfg,
-                optimizer=self.optimizer,
-                total_steps=total_steps,
-            )
-        except TypeError:
-            # scheduler doesn't accept total_steps
-            return hydra.utils.instantiate(
-                scheduler_cfg,
-                optimizer=self.optimizer,
-            )
+
+        # Resolve the actual class/target from the config
+        target_cls = hydra.utils.get_class(scheduler_cfg._target_)
+
+        # Get the list of parameters the scheduler's __init__ accepts
+        signature = inspect.signature(target_cls.__init__)
+
+        kwargs = {"optimizer": self.optimizer}
+
+        # Only add total_steps if the class explicitly asks for it
+        if "total_steps" in signature.parameters:
+            kwargs["total_steps"] = total_steps
+
+        return hydra.utils.instantiate(scheduler_cfg, **kwargs)
 
     def _check_improvement(self, score, best_score):
         if self.cfg.save_max_score:
@@ -86,9 +89,7 @@ class Trainer:
             )
 
             if self.state.patience >= self.cfg.max_patience:
-                self.logger.info(
-                    f"Early stopping triggered after {self.state.patience} epochs without improvement."
-                )
+                self.logger.info(f"Early stopping triggered after {self.state.patience} epochs without improvement.")
                 return True
 
         return False
@@ -139,9 +140,7 @@ class Trainer:
 
         self.logger.info("Training control variables:")
         self.logger.info(f"`steps_per_epoch`: {steps_per_epoch}")
-        self.logger.info(
-            f"Gradient accumulation steps: {self.cfg.gradient_accumulation_steps}"
-        )
+        self.logger.info(f"Gradient accumulation steps: {self.cfg.gradient_accumulation_steps}")
         self.logger.info(f"`update_steps_per_epoch`: {update_steps_per_epoch}")
         self.logger.info(f"`max_steps`: {max_steps}")
         self.logger.info(f"`max_epochs`: {max_epochs}")
@@ -177,10 +176,7 @@ class Trainer:
             self.state.epochs_trained += 1
             self.training_epoch_end(training_epoch_output)
 
-            if (
-                epoch % self.cfg.chkpt_interval == 0
-                and self.accelerator.is_main_process
-            ):
+            if epoch % self.cfg.chkpt_interval == 0 and self.accelerator.is_main_process:
                 self._save_checkpoint(self.state.epochs_trained)
 
             if epoch % self.cfg.validation_interval == 0:
@@ -196,9 +192,7 @@ class Trainer:
 
             self.accelerator.wait_for_everyone()
 
-            reduced_early_stop_mark = self.accelerator.reduce(
-                early_stop_mark, reduction="sum"
-            )
+            reduced_early_stop_mark = self.accelerator.reduce(early_stop_mark, reduction="sum")
             if reduced_early_stop_mark != 0:
                 break
 
@@ -226,9 +220,7 @@ class Trainer:
             gathered_step_output = self.accelerator.gather_for_metrics(step_output)
             validation_output.append(gathered_step_output)
 
-        self.logger.info(
-            "Validation steps completed, beginning validation epoch end..."
-        )
+        self.logger.info("Validation steps completed, beginning validation epoch end...")
 
         if self.accelerator.is_local_main_process:
             score = self.validation_epoch_end(validation_output)
@@ -274,15 +266,11 @@ class Trainer:
             loss_mean = torch.mean(torch.tensor(loss_items))
 
             if self.accelerator.is_local_main_process:
-                self.logger.info(
-                    f"Training Loss '{key}' on epoch {self.state.epochs_trained}: {loss_mean}"
-                )
+                self.logger.info(f"Training Loss '{key}' on epoch {self.state.epochs_trained}: {loss_mean}")
                 self.logger.log_metrics(
                     {
                         f"Train_Epoch/{key}": loss_mean.item(),
-                        f"Train_Epoch/lr": self.optimizer.param_groups[0][
-                            "lr"
-                        ],  # TODO: support multiple param groups
+                        f"Train_Epoch/lr": self.optimizer.param_groups[0]["lr"],  # TODO: support multiple param groups
                     },
                     step=self.state.epochs_trained,
                 )
@@ -295,19 +283,20 @@ class Trainer:
         raise NotImplementedError
 
     def _save_checkpoint(self, epoch, best=False):
-        os.makedirs("checkpoints", exist_ok=True)
+        ckpts_dir = os.path.join(os.getcwd(), "checkpoints")
+        os.makedirs(ckpts_dir, exist_ok=True)
 
         if best:
-            ckpt_dir = os.path.join("checkpoints", "best")
+            ckpt_path = os.path.join(ckpts_dir, "best")
 
             # also log to logger if available
             unwrapped_model = self.accelerator.unwrap_model(self.model)
             self.logger.log_model(unwrapped_model, "best_model")
         else:
-            ckpt_dir = os.path.join("checkpoints", str(epoch))
+            ckpt_path = os.path.join(ckpts_dir, str(epoch))
 
-        os.makedirs(ckpt_dir, exist_ok=True)
-        self.accelerator.save_state(ckpt_dir)
+        os.makedirs(ckpt_path, exist_ok=True)
+        self.accelerator.save_state(ckpt_path)
 
     def _load_checkpoint(self, ckpt_path):
         self.accelerator.load_state(ckpt_path)
