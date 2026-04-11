@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import accelerate
 import hydra
 import torch
@@ -14,17 +16,19 @@ def main(cfg: DictConfig) -> None:
     """
     accelerator = accelerate.Accelerator()
     model = hydra.utils.instantiate(cfg.model)
-    state_dict = load_file(cfg.checkpoint_path)
-    model.load_state_dict(state_dict)
 
-    dataset = hydra.utils.instantiate(cfg.dataset, split="test")
+    dataset = hydra.utils.instantiate(cfg.dataset)
     dataloader = hydra.utils.instantiate(cfg.dataloader, dataset=dataset)
     # pass accelerator to logger for distributed logging
     ml_logger = hydra.utils.instantiate(cfg.logger, accelerator=accelerator)
 
     model, dataset, dataloader = accelerator.prepare(model, dataset, dataloader)
 
-    evaluator = Evaluator(model, dataset, cfg=cfg.evaluator, logger=ml_logger, loader=dataloader)
+    weights_path = Path(cfg.checkpoint_path) / "model.safetensors"
+    state_dict = load_file(weights_path, device=str(accelerator.device))
+    model.load_state_dict(state_dict)
+
+    evaluator = Evaluator(model, dataset, cfg=cfg.evaluator, logger=ml_logger, loader=dataloader, accelerator=accelerator)
     evaluator.run()
 
 
