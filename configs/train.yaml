@@ -1,16 +1,31 @@
-exp_name: default
+exp_name: train
+run_name: unet_real_ds
+
+hydra:
+  job:
+    chdir: True
+  run:
+    dir: outputs/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: multirun/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
 
 defaults:
   - trainer: default # loads key/value.yaml -> trainer/default.yaml
-  - logger: mlflow
-  - model: unet
+  - logger: unet
+  - model: subpixel
   - _self_ # options from this file
 
-dataset:
+train_dataset:
   _target_: data.datasets.dataset.MISRDataset
-  manifest: data/manifests/train.json
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/hradis/pruned_train.json
+
+val_dataset:
+  _target_: data.datasets.dataset.MISRDataset
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/hradis/pruned_val.json
 
 dataloader:
+  _target_: torch.utils.data.DataLoader
   batch_size: 16
   num_workers: 4
   shuffle: true
@@ -19,7 +34,6 @@ dataloader:
 optimizer:
   _target_: torch.optim.Adam
   lr: 1e-3
-  weight_decay: 1e-4
 
 loss:
   _target_: torch.nn.MSELoss
