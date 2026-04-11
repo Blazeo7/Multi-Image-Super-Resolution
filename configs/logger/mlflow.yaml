@@ -1,4 +1,4 @@
 _target_: loggers.mlflow_logger.MLflowLogger
 experiment_name: ${exp_name}
-run_name: ${mode}
+run_name: ${oc.select:run_name,default}
 tracking_uri: sqlite:///${hydra:runtime.cwd}/mlflow.db

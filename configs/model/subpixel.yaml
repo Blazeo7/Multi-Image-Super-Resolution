@@ -1,4 +1,4 @@
 _target_: models.PixelShuffleNet.PixelShuffleNet
 scale_factor: 2
-num_frames: 5
+num_frames: 6
 out_channels: 3
