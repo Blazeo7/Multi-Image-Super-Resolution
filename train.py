@@ -3,21 +3,23 @@ from accelerate import Accelerator
 from omegaconf import DictConfig
 
 # NOTE: if there will be more trainers, consider using hydra instantiation for them as well
+from loggers.base_logger import BaseLogger
 from trainers import BasicTrainer as Trainer
 
 
-@hydra.main(config_path="configs", config_name="config", version_base=None)
+@hydra.main(config_path="configs", config_name="train", version_base=None)
 def main(cfg: DictConfig) -> None:
     accelerator = Accelerator(
         gradient_accumulation_steps=cfg.trainer.gradient_accumulation_steps,
     )
 
-    logger = hydra.utils.instantiate(cfg.logger)
+    logger: BaseLogger = hydra.utils.instantiate(cfg.logger)
+    logger.log_hyperparameters(dict(cfg))
 
     model = hydra.utils.instantiate(cfg.model)
 
-    train_dataset = hydra.utils.instantiate(cfg.dataset, split="train")
-    val_dataset = hydra.utils.instantiate(cfg.dataset, split="dev")
+    train_dataset = hydra.utils.instantiate(cfg.train_dataset)
+    val_dataset = hydra.utils.instantiate(cfg.val_dataset)
 
     train_loader = hydra.utils.instantiate(cfg.dataloader, dataset=train_dataset)
     val_loader = hydra.utils.instantiate(cfg.dataloader, dataset=val_dataset)
