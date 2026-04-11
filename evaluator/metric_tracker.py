@@ -1,23 +1,23 @@
-import logging
-from omegaconf import DictConfig
-import torch
-import numpy as np
-import os
 import json
+import logging
+import os
+
+import numpy as np
 import pandas as pd
-from torchmetrics.image import (
-    PeakSignalNoiseRatio as psnr,
-    StructuralSimilarityIndexMeasure as ssim,
-    LearnedPerceptualImagePatchSimilarity as lpips,
-)
+import torch
+from accelerate import Accelerator
+from omegaconf import DictConfig
+from torchmetrics.image import LearnedPerceptualImagePatchSimilarity as lpips
+from torchmetrics.image import PeakSignalNoiseRatio as psnr
+from torchmetrics.image import StructuralSimilarityIndexMeasure as ssim
 
 log = logging.getLogger(__name__)
 
 
 class MetricTracker:
-    def __init__(self, cfg: DictConfig):
+    def __init__(self, cfg: DictConfig, accelerator: Accelerator):
         self.cfg = cfg
-        self.device = self.cfg.hardware.device
+        self.device = accelerator.device
         self.metrics_instances = torch.nn.ModuleDict()
 
         self._setup_metrics()

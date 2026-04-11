@@ -1,8 +1,9 @@
 import logging
-import os
 import math
-import numpy as np
+import os
+
 import matplotlib.pyplot as plt
+import numpy as np
 from omegaconf import DictConfig
 
 from loggers.base_logger import BaseLogger
@@ -40,6 +41,10 @@ class Visualizer:
                 continue
 
             lr_stack, sr, hr = self.all_samples[sample_idx]
+
+            lr_h = lr_stack.shape[-1]
+            lr_w = lr_stack.shape[-2]
+            lr_stack = lr_stack.reshape(-1, 3, lr_w, lr_h)
             n_lr_images = lr_stack.shape[0]
 
             # Create a string of metrics for the title
@@ -47,9 +52,7 @@ class Visualizer:
             metric_str = f"PSNR: {m['psnr']:.2f} | SSIM: {m['ssim']:.3f} | LPIPS: {m['lpips']:.3f}"
 
             # ── choose which LR frames to show ──────────────────────────────────
-            n_show = (
-                n_lr_images if self.viz_cfg.lr_show is None else min(self.viz_cfg.lr_show, n_lr_images)
-            )
+            n_show = n_lr_images if self.viz_cfg.lr_show is None else min(self.viz_cfg.lr_show, n_lr_images)
 
             indices_lr = self._get_image_indices(n_lr_images, n_show)
             selected_images = [lr_stack[i] for i in indices_lr]
@@ -104,14 +107,11 @@ class Visualizer:
             fig.suptitle(f"{self.viz_cfg.type.upper()} | Index: {sample_idx}\n{metric_str}", fontsize=12)
             plt.tight_layout()
 
-            filename = (
-                f"{self.viz_cfg.order_by_metric}"
-                if self.viz_cfg.type == "metric"
-                else f"{self.viz_cfg.type}"
-            )
+            filename = f"{self.viz_cfg.order_by_metric}" if self.viz_cfg.type == "metric" else f"{self.viz_cfg.type}"
 
             img_name = f"{filename}_{idx +1}.png"
             out_path = os.path.join(self.viz_dir, img_name)
+            self.logger.log_figure(fig, img_name)
             plt.savefig(out_path, bbox_inches="tight", dpi=150)
             plt.close(fig)
 

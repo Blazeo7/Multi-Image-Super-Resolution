@@ -4,6 +4,7 @@ from datetime import datetime as dt
 
 import numpy as np
 import torch
+from accelerate import Accelerator
 from omegaconf import DictConfig
 from torch import nn
 from torch.utils.data import DataLoader
@@ -23,6 +24,7 @@ class Evaluator:
         cfg: DictConfig,
         logger: BaseLogger,
         loader: DataLoader,
+        accelerator: Accelerator,
     ):
         self.cfg = cfg
         self.setup_logging_directory(model, self.cfg.paths.base_save_dir)
@@ -32,7 +34,7 @@ class Evaluator:
         self.viz_count = self.cfg.visualization.num_samples
 
         self.inference = InferenceEngine(model, cfg)
-        self.metrics = MetricTracker(cfg)
+        self.metrics = MetricTracker(cfg, accelerator)
         self.visualizer = Visualizer(self.model_eval_dir, cfg, logger)
 
     def setup_logging_directory(self, model: nn.Module, save_dir: str):
