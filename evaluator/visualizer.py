@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+import secrets
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -109,7 +110,7 @@ class Visualizer:
 
             filename = f"{self.viz_cfg.order_by_metric}" if self.viz_cfg.type == "metric" else f"{self.viz_cfg.type}"
 
-            img_name = f"{filename}_{idx +1}.png"
+            img_name = f"{filename}_{idx +1}_{secrets.token_hex(2)}.png"
             out_path = os.path.join(self.viz_dir, img_name)
             self.logger.log_figure(fig, img_name)
             plt.savefig(out_path, bbox_inches="tight", dpi=150)
