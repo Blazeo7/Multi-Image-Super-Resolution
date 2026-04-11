@@ -25,11 +25,13 @@ class Evaluator:
         logger: BaseLogger,
         loader: DataLoader,
         accelerator: Accelerator,
+        metric_prefix,
     ):
         self.cfg = cfg
         self.setup_logging_directory(model, self.cfg.paths.base_save_dir)
         self.logger = logger
         self.loader = loader
+        self.metric_prefix = metric_prefix
 
         self.viz_count = self.cfg.visualization.num_samples
 
@@ -59,8 +61,12 @@ class Evaluator:
             pbar.set_postfix(PSNR=f"{self.metrics.compute_averages()['PSNR']:.2f}")
 
         avg_metrics = self.metrics.compute_averages()
+        if self.metric_prefix:
+            # prepend with prefix if provided (logging purposes)
+            avg_metrics = {f"{self.metric_prefix}/{k}": v for k, v in avg_metrics.items()}
+
         self.metrics.save_metrics_csv(self.model_eval_dir)
-        self.logger._log_metrics(avg_metrics, step=0)
+        self.logger.log_metrics(avg_metrics, step=0)
 
         indices = self._get_indices_by_viz_type()
         self.visualizer.save(indices, self.metrics.results_history)
