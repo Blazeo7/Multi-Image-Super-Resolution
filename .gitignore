@@ -179,3 +179,6 @@ outputs/
 .DS_Store
 mlflow.db
 /data/raw/synthetic
+/mlruns
+/data/raw
+/data/manifests
