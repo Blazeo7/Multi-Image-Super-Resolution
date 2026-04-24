@@ -18,17 +18,20 @@ INPUT_BASE_DIR = BASE_DIR / "downloaded_textures"
 
 TARGET_NAME = "Plane"
 RENDERS_PER_TEXTURE = 5
-UV_SCALE = (3.0, 3.0, 1.0)
+UV_SCALE = (1.0, 1.0, 1.0)
 
 BASE_RESOLUTION_X = 1024
 BASE_RESOLUTION_Y = 1024
 
 NOISE_STRENGTH = 0.05
 
-X_RANGE = (-2.5, 2.5)
-Y_RANGE = (-2.5, 2.5)
-Z_RANGE = (5.0, 8.0)
-SHIFT_RADIUS = 0.5
+X_CAMERA_RANGE = (-0.625, 0.625) # Z = 1.6
+Y_CAMERA_RANGE = (-0.625, 0.625) # Z = 1.6
+Z_RANGE = (1.2, 1.6)
+X_TRACKER_RANGE = (-0.1,0.1)
+Y_TRACKER_RANGE = (-0.1,0.1)
+Z_TRACKER_RANGE = (0.0,0.0)
+
 
 PLANE_ANCHORS_3D = [
     (1.0, 1.0, 0.0),
@@ -112,7 +115,7 @@ def get_2d_pixels(scene, camera, points_3d):
         coords_2d.append((x_pix, y_pix))
     return coords_2d
 
-
+# this should help: https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera?noredirect=1&lq=1
 def compute_homography(src_pts, dst_pts):
     A = []
     for i in range(4):
