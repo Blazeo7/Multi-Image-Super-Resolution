@@ -25,13 +25,12 @@ BASE_RESOLUTION_Y = 1024
 
 NOISE_STRENGTH = 0.05
 
-X_CAMERA_RANGE = (-0.625, 0.625) # Z = 1.6
-Y_CAMERA_RANGE = (-0.625, 0.625) # Z = 1.6
+X_CAMERA_RANGE = (-0.625, 0.625)  # Z = 1.6
+Y_CAMERA_RANGE = (-0.625, 0.625)  # Z = 1.6
 Z_RANGE = (1.2, 1.6)
-X_TRACKER_RANGE = (-0.1,0.1)
-Y_TRACKER_RANGE = (-0.1,0.1)
-Z_TRACKER_RANGE = (0.0,0.0)
-
+X_TRACKER_RANGE = (-0.1, 0.1)
+Y_TRACKER_RANGE = (-0.1, 0.1)
+Z_TRACKER_RANGE = (0.0, 0.0)
 
 PLANE_ANCHORS_3D = [
     (1.0, 1.0, 0.0),
@@ -55,7 +54,7 @@ def enable_gpu_rendering():
     # Force Blender to query the system for all devices
     cycles_prefs.refresh_devices()
 
-    compute_types = [ 'CUDA', 'METAL', 'HIP', 'ONEAPI']
+    compute_types = ['CUDA', 'METAL', 'HIP', 'ONEAPI']
     gpu_found = False
 
     for compute_type in compute_types:
@@ -94,6 +93,7 @@ def enable_gpu_rendering():
         for device in cycles_prefs.devices:
             device.use = (device.type == 'CPU')
 
+
 def purge_unused_images():
     """Removes unassigned images from Blender's memory to prevent RAM bloat."""
     for img in list(bpy.data.images):
@@ -114,6 +114,7 @@ def get_2d_pixels(scene, camera, points_3d):
         y_pix = (1.0 - co_ndc.y) * res_y
         coords_2d.append((x_pix, y_pix))
     return coords_2d
+
 
 # this should help: https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera?noredirect=1&lq=1
 def compute_homography(src_pts, dst_pts):
@@ -152,11 +153,10 @@ def setup_pbr_material(target_obj, tex_dir):
     mat_name = f"Mat_{tex_dir.name}"
     if mat_name in bpy.data.materials:
         mat = bpy.data.materials[mat_name]
-        mat.node_tree.nodes.clear()
     else:
         mat = bpy.data.materials.new(name=mat_name)
         mat.use_nodes = True
-        mat.node_tree.nodes.clear()
+    mat.node_tree.nodes.clear()
 
     if not target_obj.data.materials:
         target_obj.data.materials.append(mat)
@@ -221,10 +221,13 @@ def setup_pbr_material(target_obj, tex_dir):
         links.new(normal_node.outputs['Color'], normal_map_node.inputs['Color'])
         links.new(normal_map_node.outputs['Normal'], bsdf.inputs['Normal'])
 
-    disp_node = add_texture_node("displacement.png", -900, False) or add_texture_node("height.png", -900, False)
+    disp_node = add_texture_node("displacement.png", -900, False)
     if disp_node:
         disp_map_node = nodes.new('ShaderNodeDisplacement')
         disp_map_node.location = (0, -300)
+        disp_map_node.inputs['Midlevel'] = 0.5
+        disp_map_node.inputs['Scale'] = 1.0
+        links.new(normal_map_node.outputs['Normal'], disp_map_node.inputs['Normal'])
         links.new(disp_node.outputs['Color'], disp_map_node.inputs['Height'])
         links.new(disp_map_node.outputs['Displacement'], output_node.inputs['Displacement'])
 
