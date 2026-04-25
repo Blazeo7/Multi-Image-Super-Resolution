@@ -1,68 +1,70 @@
-import os
-import json
 import cv2
+import json
 import numpy as np
-import glob
+import os
+from pathlib import Path
 
+# --- CONFIGURATION ---
+# Adjust these paths to match where your files are actually stored
+JSON_FILE_PATH = "./homographies/matrices.json"
+INPUT_DIR = Path("./homographies")   # Folder containing the LQ renders
+OUTPUT_DIR = Path("./homographies/warped") # Folder to save the warped images
 
-def process_homography_transformations(directory='./homographies'):
-    # Find all JSON files in the specified directory
-    json_files = glob.glob(os.path.join(directory, '*.json'))
+# The resolution of your Main/HQ camera (the target space for the homography)
+TARGET_WIDTH = 1024
+TARGET_HEIGHT = 1024
 
-    if not json_files:
-        print("No JSON files found in the directory.")
+def main():
+    # Create the output directory if it doesn't exist
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 1. Load the homography matrices from the JSON file
+    if not os.path.exists(JSON_FILE_PATH):
+        print(f"Error: Could not find {JSON_FILE_PATH}")
         return
 
-    for json_file in json_files:
-        print(f"Processing {json_file}...")
+    with open(JSON_FILE_PATH, 'r') as f:
+        matrix_data = json.load(f)
 
-        with open(json_file, 'r') as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError:
-                print(f"Error reading {json_file}. Skipping.")
-                continue
+    print(f"Loaded {len(matrix_data)} transformation matrices. Starting warp...")
 
-        for lq_filename, info in data.items():
-            hq_filename = info.get('target_hq_file')
-            matrix = info.get('homography_matrix')
+    # 2. Iterate through each image and matrix
+    for filename, matrix_list in matrix_data.items():
+        input_image_path = INPUT_DIR / filename
+        output_image_path = OUTPUT_DIR / f"warped_{filename}"
 
-            if not matrix:
-                print(f"No homography matrix found for {lq_filename}. Skipping.")
-                continue
+        # Check if the image actually exists before trying to process it
+        if not input_image_path.exists():
+            print(f"Skipping {filename}: File not found in {INPUT_DIR}")
+            continue
 
-            # Convert the 3x3 list into a numpy array of floats
-            H = np.array(matrix, dtype=np.float32)
+        # 3. Read the image
+        # cv2.imread loads the image as a NumPy array in BGR color format
+        img = cv2.imread(str(input_image_path))
 
-            # Load the source (LQ) image
-            lq_path = os.path.join(directory, lq_filename)
-            lq_img = cv2.imread(lq_path)
+        if img is None:
+            print(f"Error: Failed to load image {input_image_path}")
+            continue
 
-            if lq_img is None:
-                print(f"Warning: Could not find or load {lq_filename}. Skipping.")
-                continue
+        # 4. Convert the JSON list-of-lists into a 3x3 float32 NumPy array
+        # OpenCV requires transformation matrices to be floating point numbers
+        H_matrix = np.array(matrix_list, dtype=np.float32)
 
-            # Attempt to load the target (HQ) image to get the exact output dimensions.
-            # If the HQ image isn't in the folder, it falls back to the LQ image's dimensions.
-            hq_path = os.path.join(directory, hq_filename)
-            hq_img = cv2.imread(hq_path)
+        # 5. Apply the Homography Warp
+        # dsize is (width, height). We use the TARGET dimensions so the LQ image
+        # is stretched and projected onto the exact same canvas as your HQ image.
+        warped_img = cv2.warpPerspective(
+            src=img,
+            M=H_matrix,
+            dsize=(TARGET_WIDTH, TARGET_HEIGHT),
+            flags=cv2.INTER_LINEAR # Linear interpolation works best for standard textures
+        )
 
-            if hq_img is not None:
-                h, w = hq_img.shape[:2]
-            else:
-                h, w = lq_img.shape[:2]
+        # 6. Save the result
+        cv2.imwrite(str(output_image_path), warped_img)
+        print(f"Successfully warped and saved: {output_image_path.name}")
 
-            # Apply the perspective transformation
-            transformed_img = cv2.warpPerspective(lq_img, H, (w, h))
-
-            # Save the transformed image with a new prefix
-            output_filename = f"transformed_{lq_filename}"
-            output_path = os.path.join(directory, output_filename)
-            cv2.imwrite(output_path, transformed_img)
-
-            print(f"  -> Successfully generated: {output_filename}")
-
+    print("\nAll warping operations complete!")
 
 if __name__ == "__main__":
-    # Run the script in the current directory
-    process_homography_transformations()
+    main()

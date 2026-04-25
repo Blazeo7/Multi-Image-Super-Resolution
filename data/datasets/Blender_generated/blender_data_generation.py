@@ -6,7 +6,8 @@ from pathlib import Path
 import bpy
 import bpy_extras
 import numpy as np
-from mathutils import Vector
+from mathutils import Vector, Matrix
+from numpy.ma.extras import average
 
 # ==========================================
 # CONFIGURATION
@@ -15,22 +16,38 @@ BASE_DIR = Path(bpy.data.filepath).parent.resolve() if bpy.data.filepath else Pa
 OUTPUT_DIR = BASE_DIR / "blender_dataset_renders"
 TEMP_TEX_DIR = BASE_DIR / "blender_temp_textures"
 INPUT_BASE_DIR = BASE_DIR / "downloaded_textures"
+RENDERING_INFO_FILE_NAME = "render_info.json"
 
 TARGET_NAME = "Plane"
+LIGHT_OBJECT_NAME = "Sun.001"
+TRACKER_NAME = "CameraTracker"
+
 RENDERS_PER_TEXTURE = 5
+# number of camera/tracker/light position variations to be rendered
+NUM_SCENE_SETTINGS = 1
 UV_SCALE = (1.0, 1.0, 1.0)
 
 BASE_RESOLUTION_X = 1024
 BASE_RESOLUTION_Y = 1024
+# the quality compared to the base image
+LOW_RES_PERCENTAGE = 50
+# the number of rendering samples. Affects the rendering time
+RENDER_SAMPLE_CNT = 128
 
-NOISE_STRENGTH = 0.05
-
-X_CAMERA_RANGE = (-0.625, 0.625)  # Z = 1.6
-Y_CAMERA_RANGE = (-0.625, 0.625)  # Z = 1.6
-Z_RANGE = (1.2, 1.6)
+# the height of the camera for the reference image
+REF_CAM_Z = 1.4
+X_CAMERA_RANGE = (-0.625, 0.625)
+Y_CAMERA_RANGE = (-0.625, 0.625)
+Z_CAMERA_RANGE = (1.2, 1.6)
 X_TRACKER_RANGE = (-0.1, 0.1)
 Y_TRACKER_RANGE = (-0.1, 0.1)
 Z_TRACKER_RANGE = (0.0, 0.0)
+X_LIGHT_RANGE = (-9.0, 9.0)
+Y_LIGHT_RANGE = (-9.0, 9.0)
+Z_LIGHT_RANGE = (4.0, 9.0)
+LIGHT_POWER_RANGE = (45.0, 80.0)
+LIGHT_EXPOSURE = 4.0
+LIGHT_NORMALIZE = True
 
 PLANE_ANCHORS_3D = [
     (1.0, 1.0, 0.0),
@@ -54,7 +71,7 @@ def enable_gpu_rendering():
     # Force Blender to query the system for all devices
     cycles_prefs.refresh_devices()
 
-    compute_types = ['CUDA', 'METAL', 'HIP', 'ONEAPI']
+    compute_types = ['OPTIX','CUDA', 'METAL', 'HIP', 'ONEAPI']
     gpu_found = False
 
     for compute_type in compute_types:
@@ -101,50 +118,134 @@ def purge_unused_images():
             bpy.data.images.remove(img)
 
 
-# ==========================================
-# MATH & GEOMETRY HELPERS
-# ==========================================
-def get_2d_pixels(scene, camera, points_3d):
-    res_x = scene.render.resolution_x * (scene.render.resolution_percentage / 100.0)
-    res_y = scene.render.resolution_y * (scene.render.resolution_percentage / 100.0)
-    coords_2d = []
-    for p in points_3d:
-        co_ndc = bpy_extras.object_utils.world_to_camera_view(scene, camera, Vector(p))
-        x_pix = co_ndc.x * res_x
-        y_pix = (1.0 - co_ndc.y) * res_y
-        coords_2d.append((x_pix, y_pix))
-    return coords_2d
+# ---------------------------------------------------------------
+# 3x4 P matrix from Blender camera
+# ---------------------------------------------------------------
+
+# BKE_camera_sensor_size
+def get_sensor_size(sensor_fit, sensor_x, sensor_y):
+    if sensor_fit == 'VERTICAL':
+        return sensor_y
+    return sensor_x
+
+
+# BKE_camera_sensor_fit
+def get_sensor_fit(sensor_fit, size_x, size_y):
+    if sensor_fit == 'AUTO':
+        if size_x >= size_y:
+            return 'HORIZONTAL'
+        else:
+            return 'VERTICAL'
+    return sensor_fit
+
+
+# Build intrinsic camera parameters from Blender camera data
+#
+# See notes on this in
+# blender.stackexchange.com/questions/15102/what-is-blenders-camera-projection-matrix-model
+# as well as
+# https://blender.stackexchange.com/a/120063/3581
+def get_calibration_matrix_K_from_blender(camd):
+    if camd.type != 'PERSP':
+        raise ValueError('Non-perspective cameras not supported')
+    scene = bpy.context.scene
+    f_in_mm = camd.lens
+    scale = scene.render.resolution_percentage / 100
+    resolution_x_in_px = scale * scene.render.resolution_x
+    resolution_y_in_px = scale * scene.render.resolution_y
+    sensor_size_in_mm = get_sensor_size(camd.sensor_fit, camd.sensor_width, camd.sensor_height)
+    sensor_fit = get_sensor_fit(
+        camd.sensor_fit,
+        scene.render.pixel_aspect_x * resolution_x_in_px,
+        scene.render.pixel_aspect_y * resolution_y_in_px
+    )
+    pixel_aspect_ratio = scene.render.pixel_aspect_y / scene.render.pixel_aspect_x
+    if sensor_fit == 'HORIZONTAL':
+        view_fac_in_px = resolution_x_in_px
+    else:
+        view_fac_in_px = pixel_aspect_ratio * resolution_y_in_px
+    pixel_size_mm_per_px = sensor_size_in_mm / f_in_mm / view_fac_in_px
+    s_u = 1 / pixel_size_mm_per_px
+    s_v = 1 / pixel_size_mm_per_px / pixel_aspect_ratio
+
+    # Parameters of intrinsic calibration matrix K
+    u_0 = resolution_x_in_px / 2 - camd.shift_x * view_fac_in_px
+    v_0 = resolution_y_in_px / 2 + camd.shift_y * view_fac_in_px / pixel_aspect_ratio
+    skew = 0  # only use rectangular pixels
+
+    K = Matrix(
+        ((s_u, skew, u_0),
+         (0, s_v, v_0),
+         (0, 0, 1)))
+    return K
+
+
+# Returns camera rotation and translation matrices from Blender.
+#
+# There are 3 coordinate systems involved:
+#    1. The World coordinates: "world"
+#       - right-handed
+#    2. The Blender camera coordinates: "bcam"
+#       - x is horizontal
+#       - y is up
+#       - right-handed: negative z look-at direction
+#    3. The desired computer vision camera coordinates: "cv"
+#       - x is horizontal
+#       - y is down (to align to the actual pixel coordinates
+#         used in digital images)
+#       - right-handed: positive z look-at direction
+def get_3x4_RT_matrix_from_blender(cam):
+    # bcam stands for blender camera
+    R_bcam2cv = Matrix(
+        ((1, 0, 0),
+         (0, -1, 0),
+         (0, 0, -1)))
+
+    # Transpose since the rotation is object rotation,
+    # and we want coordinate rotation
+    # R_world2bcam = cam.rotation_euler.to_matrix().transposed()
+    # T_world2bcam = -1*R_world2bcam @ location
+    #
+    # Use matrix_world instead to account for all constraints
+    location, rotation = cam.matrix_world.decompose()[0:2]
+    R_world2bcam = rotation.to_matrix().transposed()
+
+    # Convert camera location to translation vector used in coordinate changes
+    # T_world2bcam = -1*R_world2bcam @ cam.location
+    # Use location from matrix_world to account for constraints:
+    T_world2bcam = -1 * R_world2bcam @ location
+
+    # Build the coordinate transform matrix from world to computer vision camera
+    R_world2cv = R_bcam2cv @ R_world2bcam
+    T_world2cv = R_bcam2cv @ T_world2bcam
+
+    # put into 3x4 matrix
+    RT = Matrix((
+        R_world2cv[0][:] + (T_world2cv[0],),
+        R_world2cv[1][:] + (T_world2cv[1],),
+        R_world2cv[2][:] + (T_world2cv[2],)
+    ))
+    return RT
+
+
+def get_3x4_P_matrix_from_blender(cam):
+    K = get_calibration_matrix_K_from_blender(cam.data)
+    RT = get_3x4_RT_matrix_from_blender(cam)
+    return K @ RT, K, RT
 
 
 # this should help: https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera?noredirect=1&lq=1
-def compute_homography(src_pts, dst_pts):
-    A = []
-    for i in range(4):
-        x, y = src_pts[i]
-        u, v = dst_pts[i]
-        A.append([-x, -y, -1, 0, 0, 0, x * u, y * u, u])
-        A.append([0, 0, 0, -x, -y, -1, x * v, y * v, v])
-    A = np.array(A)
-    _, _, V = np.linalg.svd(A)
-    H = V[-1].reshape(3, 3)
-    return H / H[2, 2]
+
+def get_plane_homography(cam):
+    return cam[:, [0, 1, 3]]
 
 
-def setup_tracking_target(camera):
-    if "CameraTracker" in bpy.data.objects:
-        tracker = bpy.data.objects["CameraTracker"]
-    else:
-        bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
-        tracker = bpy.context.active_object
-        tracker.name = "CameraTracker"
-
-    camera.constraints.clear()
-    track_constraint = camera.constraints.new(type='TRACK_TO')
-    track_constraint.target = tracker
-    track_constraint.track_axis = 'TRACK_NEGATIVE_Z'
-    track_constraint.up_axis = 'UP_Y'
-    return tracker
-
+def get_homography(main_cam, second_cam):
+    P_main, _, _ = get_3x4_P_matrix_from_blender(main_cam)
+    P_rand, _, _ = get_3x4_P_matrix_from_blender(second_cam)
+    H_main = get_plane_homography(main_cam)
+    H_rand = get_plane_homography(second_cam)
+    return H_main @ H_rand.inverted()
 
 # ==========================================
 # MATERIAL SETUP
@@ -233,36 +334,6 @@ def setup_pbr_material(target_obj, tex_dir):
 
 
 # ==========================================
-# POST-PROCESSING
-# ==========================================
-def apply_noise_batch(lq_files):
-    total = len(lq_files)
-    print(f"\n=== APPLYING NOISE TO {total} IMAGES ===")
-
-    for idx, filepath in enumerate(lq_files):
-        if not os.path.exists(filepath):
-            continue
-
-        print(f"Applying noise [{idx + 1}/{total}]: {os.path.basename(filepath)}")
-        try:
-            img = bpy.data.images.load(str(filepath))
-            pixels = np.empty(len(img.pixels), dtype=np.float32)
-            img.pixels.foreach_get(pixels)
-
-            pixels = pixels.reshape(-1, 4)
-            noise = np.random.normal(loc=0.0, scale=NOISE_STRENGTH, size=(pixels.shape[0], 3)).astype(np.float32)
-            pixels[:, :3] = np.clip(pixels[:, :3] + noise, 0.0, 1.0)
-
-            img.pixels.foreach_set(pixels.ravel())
-            img.save()
-            bpy.data.images.remove(img)
-        except Exception as e:
-            print(f"  -> Error on {os.path.basename(filepath)}: {e}")
-
-    print("\n=== DATASET GENERATION 100% COMPLETE! ===")
-
-
-# ==========================================
 # MAIN EXECUTION (SYNCHRONOUS)
 # ==========================================
 def main():
@@ -275,17 +346,18 @@ def main():
         return
 
     enable_gpu_rendering()
-    scene.cycles.samples = 128
+    scene.cycles.samples = RENDER_SAMPLE_CNT
     scene.render.resolution_x = BASE_RESOLUTION_X
     scene.render.resolution_y = BASE_RESOLUTION_Y
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    tracker = setup_tracking_target(camera)
-
+    tracker = bpy.data.objects[TRACKER_NAME]
     # Pre-calculate dead-on pixels for homography matrices globally
     tracker.location = (0.0, 0.0, 0.0)
-    camera.location = (0.0, 0.0, 8.0)
+    camera.location = (0.0, 0.0, REF_CAM_Z)
+    # light_object should be in scene already and have constraints set
+    light_object = bpy.data.objects[LIGHT_OBJECT_NAME]
     scene.render.resolution_percentage = 100
     bpy.context.view_layer.update()
 
@@ -305,35 +377,41 @@ def main():
         tex_dir = manifest_path.parent
         texture_name = tex_dir.name
         base_filename = f"tex_{texture_name.replace(' ', '_')}"
-
-        hq_file_path = OUTPUT_DIR / f"{base_filename}_deadon_HQ.png"
+        tex_out_dir = OUTPUT_DIR / tex_dir.name
         tasks_for_this_texture = 0
+        for i_setting in range(0, NUM_SCENE_SETTINGS):
+            setting_out_dir = tex_out_dir / f"{i_setting}"
+            setting_base_filename = f"{base_filename}_{i_setting}"
+            hq_file_path = setting_out_dir / f"{setting_base_filename}_deadon_HQ.png"
 
-        # Check if HQ needs rendering
-        if not hq_file_path.exists():
+            if (setting_out_dir / RENDERING_INFO_FILE_NAME).exists():
+                print(f"{tex_out_dir} ")
+
             render_queue.append({
                 "is_first_of_texture": (tasks_for_this_texture == 0),
                 "tex_dir": tex_dir, "is_dead_on": True,
-                "tracker_loc": (0.0, 0.0, 0.0), "camera_loc": (0.0, 0.0, 8.0),
-                "res_pct": 100, "filepath": str(hq_file_path), "base_filename": base_filename,
-                "hq_filepath": str(hq_file_path)
+                "tracker_loc": (0.0, 0.0, 0.0), "camera_loc": (0.0, 0.0, REF_CAM_Z),
+                "res_pct": 100, "filepath": str(hq_file_path), "base_filename": setting_base_filename,
+                "hq_filepath": str(hq_file_path),
+                "light_location": (random.uniform(*X_LIGHT_RANGE), random.uniform(*Y_LIGHT_RANGE),
+                                   random.uniform(*Z_LIGHT_RANGE)),
+                "light_power": random.uniform(*LIGHT_POWER_RANGE),
             })
             tasks_for_this_texture += 1
-        else:
-            print(f"Skipping existing HQ: {hq_file_path.name}")
 
-        # Check which LQs need rendering
-        for i in range(RENDERS_PER_TEXTURE):
-            lq_file_path = OUTPUT_DIR / f"{base_filename}_angle_{i:03d}_LQ.png"
+            # Check which LQs need rendering
+            for i in range(RENDERS_PER_TEXTURE):
+                lq_file_path = setting_out_dir / f"{setting_base_filename}_angle_{i:03d}_LQ.png"
 
-            if not lq_file_path.exists():
                 render_queue.append({
                     "is_first_of_texture": (tasks_for_this_texture == 0),
                     "tex_dir": tex_dir, "is_dead_on": False,
                     "tracker_loc": (
-                        random.uniform(-SHIFT_RADIUS, SHIFT_RADIUS), random.uniform(-SHIFT_RADIUS, SHIFT_RADIUS), 0.0),
-                    "camera_loc": (random.uniform(*X_RANGE), random.uniform(*Y_RANGE), random.uniform(*Z_RANGE)),
-                    "res_pct": 50, "filepath": str(lq_file_path), "base_filename": base_filename,
+                        random.uniform(*X_TRACKER_RANGE), random.uniform(*Y_TRACKER_RANGE),
+                        random.uniform(*Z_TRACKER_RANGE)),
+                    "camera_loc": (random.uniform(*X_CAMERA_RANGE), random.uniform(*Y_CAMERA_RANGE),
+                                   random.uniform(*Z_CAMERA_RANGE)),
+                    "res_pct": 50, "filepath": str(lq_file_path), "base_filename": setting_base_filename,
                     "hq_filepath": str(hq_file_path)
                 })
                 tasks_for_this_texture += 1
@@ -357,6 +435,8 @@ def main():
 
         tracker.location = task["tracker_loc"]
         camera.location = task["camera_loc"]
+        light_object.location = task["light_location"]
+        light_object.energy = task["light_power"]
         scene.render.resolution_percentage = task["res_pct"]
         scene.render.filepath = task["filepath"]
 
@@ -364,9 +444,6 @@ def main():
 
         # Handle LQ specific calculations (Homography JSON tracking)
         if not task["is_dead_on"]:
-            angled_pixels = get_2d_pixels(scene, camera, PLANE_ANCHORS_3D)
-            H_matrix = compute_homography(angled_pixels, current_dead_on_pixels)
-            lq_files_to_noise.append(task["filepath"])
 
             json_path = os.path.join(OUTPUT_DIR, f"{task['base_filename']}_matrices.json")
             matrix_data = {}
@@ -374,10 +451,6 @@ def main():
                 with open(json_path, 'r') as f:
                     matrix_data = json.load(f)
 
-            matrix_data[os.path.basename(task["filepath"])] = {
-                "target_hq_file": os.path.basename(task["hq_filepath"]),
-                "homography_matrix": H_matrix.tolist()
-            }
             with open(json_path, 'w') as f:
                 json.dump(matrix_data, f, indent=4)
 
@@ -385,8 +458,7 @@ def main():
         bpy.ops.render.render(write_still=True)
 
     # Post-process noise synchronously once rendering is complete
-    print("\n=== RENDERING COMPLETE! STARTING NOISE PASS ===")
-    apply_noise_batch(lq_files_to_noise)
+    print("\n=== RENDERING COMPLETE! ===")
 
 
 if __name__ == "__main__":
