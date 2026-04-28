@@ -388,9 +388,9 @@ def main():
             scene.render.filepath = str(target_filepath)
             bpy.context.scene.view_settings.view_transform = 'Khronos PBR Neutral'
             bpy.context.scene.render.image_settings.color_mode = 'RGB'
-            bpy.context.scene.render.image_settings.file_format = 'OPEN_EXR'
-            bpy.context.scene.render.image_settings.exr_codec = 'NONE'
+            bpy.context.scene.render.image_settings.file_format = 'PNG'
             bpy.context.scene.render.image_settings.color_depth = '16'
+            bpy.context.scene.render.image_settings.compression = 15
 
             print(f"Rendering {render_task['filename']}...")
             bpy.ops.render.render(write_still=True)
