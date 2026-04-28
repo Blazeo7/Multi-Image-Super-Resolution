@@ -1,9 +1,10 @@
-import sys
 import json
 import os
+import sys
 from pathlib import Path
 
 import bpy
+import numpy as np
 from mathutils import Vector, Matrix
 
 # ==========================================
@@ -15,7 +16,8 @@ TRACKER_NAME = "CameraTracker"
 BASE_RESOLUTION_X = 1024
 BASE_RESOLUTION_Y = 1024
 RENDER_SAMPLE_CNT = 128
-UV_SCALE = (1.0, 1.0, 1.0)
+EXPECTED_TEX_WIDTH = 4096
+EXPECTED_TEX_HEGHT = 4096
 
 
 # ---------------------------------------------------------------
@@ -162,7 +164,11 @@ def setup_pbr_material(target_obj, tex_dir):
 
     mapping = nodes.new('ShaderNodeMapping')
     mapping.location = (-800, 0)
-    mapping.inputs['Scale'].default_value = UV_SCALE
+    basecolor_size = bpy.data.images.load(str(tex_dir / 'basecolor.png')).size
+    # scale the texture accordingly to pixel size of the texture
+    mapping.inputs['Scale'].default_value = (
+        basecolor_size[0] / EXPECTED_TEX_WIDTH, basecolor_size[1] / EXPECTED_TEX_HEGHT, 1.0
+    )
 
     links.new(tex_coord.outputs['UV'], mapping.inputs['Vector'])
     output_node = nodes.new('ShaderNodeOutputMaterial')
@@ -308,8 +314,8 @@ def main():
 
     # Execution Loop
     for scene_data in job["scenes"]:
-        setting_out_dir = out_dir / str(scene_data["setting_id"])
-        matrices_json_path = setting_out_dir / "matrices.json"
+        setting_out_dir = out_dir
+        matrices_json_path = setting_out_dir / f"tex_{job['texture_name']}_{scene_data['setting_id']}_metadata.json"
 
         # --- SIMPLIFIED ALL-OR-NOTHING CHECK ---
         skip_scene = True
@@ -328,21 +334,22 @@ def main():
             continue  # Skip to the next scene entirely!
         # ---------------------------------------
 
-        # If we didn't skip, create the folder (if it doesn't exist) and render everything
         os.makedirs(setting_out_dir, exist_ok=True)
 
+        # Apply Scene Lighting
         light.location = scene_data["light_loc"]
         light.data.energy = scene_data["light_power"]
 
-        # Variable to store the Main Camera projection matrix for homography
+        # Initialize the metadata with a COPY of the scene_data from the job
+        # We use a dict copy so we don't accidentally modify the original job object
+        full_metadata = scene_data.copy()
+        # Add texture info for completeness
+        full_metadata["texture_name"] = job["texture_name"]
+
         P_main_matrix = None
 
-        for render_task in scene_data["renders"]:
-            target_filepath = setting_out_dir / render_task["filename"]
-
-            # Setup scene state
-            tracker.location = render_task["tracker_loc"]
-            camera.location = render_task["camera_loc"]
+        # Pass 1: Calculate Matrices (We do this first so we can save the JSON once)
+        for render_task in full_metadata["renders"]:
             scene.render.resolution_percentage = render_task["res_pct"]
             scene.render.filepath = str(target_filepath)
 
@@ -354,27 +361,36 @@ def main():
 
             if render_task["type"] == "HQ":
                 P_main_matrix = P_matrix
+                render_task["homography_matrix"] = np.identity(3).tolist()
 
             elif render_task["type"] == "LQ" and P_main_matrix is not None:
-                import numpy as np
                 H_main = get_plane_homography(P_main_matrix)
                 H_rand = get_plane_homography(P_matrix)
 
                 H_rand_inv = np.linalg.inv(H_rand)
                 H_rand_to_main = np.matmul(H_main, H_rand_inv)
+                render_task["homography_matrix"] = H_rand_to_main.tolist()
+            else:
+                render_task["homography_matrix"] = None
 
-                matrix_data = {}
-                if matrices_json_path.exists():
-                    try:
-                        with open(matrices_json_path, 'r') as mf:
-                            matrix_data = json.load(mf)
-                    except json.JSONDecodeError:
-                        pass
+        # Save the full metadata (Scene data + All Matrices)
+        with open(matrices_json_path, 'w') as mf:
+            json.dump(full_metadata, mf, indent=4)
 
-                matrix_data[render_task["filename"]] = H_rand_to_main.tolist()
+        # Pass 2: Actual Rendering
+        for render_task in full_metadata["renders"]:
+            target_filepath = setting_out_dir / render_task["filename"]
 
-                with open(matrices_json_path, 'w') as mf:
-                    json.dump(matrix_data, mf, indent=4)
+            # Setup scene state for render
+            tracker.location = render_task["tracker_loc"]
+            camera.location = render_task["camera_loc"]
+            scene.render.resolution_percentage = render_task["res_pct"]
+            scene.render.filepath = str(target_filepath)
+            bpy.context.scene.view_settings.view_transform = 'Khronos PBR Neutral'
+            bpy.context.scene.render.image_settings.color_mode = 'RGB'
+            bpy.context.scene.render.image_settings.file_format = 'OPEN_EXR'
+            bpy.context.scene.render.image_settings.exr_codec = 'NONE'
+            bpy.context.scene.render.image_settings.color_depth = '16'
 
             print(f"Rendering {render_task['filename']}...")
             bpy.ops.render.render(write_still=True)

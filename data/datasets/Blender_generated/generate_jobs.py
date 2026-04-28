@@ -9,10 +9,11 @@ INPUT_BASE_DIR = BASE_DIR / "downloaded_textures"
 OUTPUT_DIR = BASE_DIR / "blender_dataset_renders2"
 JOBS_DIR = BASE_DIR / "jobs"
 
-RENDERS_PER_TEXTURE = 5
-NUM_SCENE_SETTINGS = 1
-REF_CAM_Z = 1.4
+RENDERS_PER_TEXTURE = 10
+NUM_SCENE_SETTINGS = 5
+LOW_RES_PERCENTAGE = 100
 
+REF_CAM_Z = 1.4
 X_CAMERA_RANGE = (-0.625, 0.625)
 Y_CAMERA_RANGE = (-0.625, 0.625)
 Z_CAMERA_RANGE = (1.2, 1.6)
@@ -23,6 +24,7 @@ X_LIGHT_RANGE = (-9.0, 9.0)
 Y_LIGHT_RANGE = (-9.0, 9.0)
 Z_LIGHT_RANGE = (4.0, 9.0)
 LIGHT_POWER_RANGE = (45.0, 80.0)
+LIGHT_SIZE_RANGE = (0.001, 5.0)
 
 
 def main():
@@ -52,6 +54,7 @@ def main():
                 "light_loc": [random.uniform(*X_LIGHT_RANGE), random.uniform(*Y_LIGHT_RANGE),
                               random.uniform(*Z_LIGHT_RANGE)],
                 "light_power": random.uniform(*LIGHT_POWER_RANGE),
+                "light_size": 0.001 if random.uniform(0.0, 1.0) < 0.5 else random.uniform(*LIGHT_SIZE_RANGE),
                 "renders": []
             }
 
@@ -73,7 +76,7 @@ def main():
                                     random.uniform(*Z_TRACKER_RANGE)],
                     "camera_loc": [random.uniform(*X_CAMERA_RANGE), random.uniform(*Y_CAMERA_RANGE),
                                    random.uniform(*Z_CAMERA_RANGE)],
-                    "res_pct": 50,
+                    "res_pct": LOW_RES_PERCENTAGE,
                     "filename": f"tex_{texture_name.replace(' ', '_')}_{i_setting}_angle_{i_render:03d}_LQ.png"
                 })
 
