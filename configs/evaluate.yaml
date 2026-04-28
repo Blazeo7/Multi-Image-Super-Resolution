@@ -1,5 +1,6 @@
-exp_name: evaluate
-run_name: subpixel_real_ds_synth_eval
+exp_name: baseline
+run_name: subpixelnet_real_ds
+eval_metric_prefix: real
 
 hydra:
   job:
@@ -18,7 +19,7 @@ defaults:
 
 dataset:
   _target_: data.datasets.dataset.MISRDataset
-  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/test_manifest.json
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/hradis/test.json
 
 dataloader:
   _target_: torch.utils.data.DataLoader
@@ -26,5 +27,5 @@ dataloader:
   num_workers: 0
   pin_memory: true
 
-checkpoint_path: "/pub/users/xnguye28/knn-sr/outputs/train_2026-04-11_02-01-01/checkpoints/best"
+checkpoint_path: "/pub/users/xnguye28/knn-sr/outputs/train_2026-04-11_02-01-01/checkpoints/12"
 

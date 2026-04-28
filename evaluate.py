@@ -28,7 +28,15 @@ def main(cfg: DictConfig) -> None:
     state_dict = load_file(weights_path, device=str(accelerator.device))
     model.load_state_dict(state_dict)
 
-    evaluator = Evaluator(model, dataset, cfg=cfg.evaluator, logger=ml_logger, loader=dataloader, accelerator=accelerator)
+    evaluator = Evaluator(
+        model,
+        dataset,
+        cfg=cfg.evaluator,
+        logger=ml_logger,
+        loader=dataloader,
+        accelerator=accelerator,
+        metric_prefix=cfg.eval_metric_prefix,
+    )
     evaluator.run()
 
 

@@ -1,4 +1,4 @@
-max_epochs: 100
+max_epochs: 12
 max_steps: -1
 gradient_accumulation_steps: 1
 validation_interval: 1

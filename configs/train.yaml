@@ -1,5 +1,5 @@
-exp_name: train
-run_name: unet_real_ds
+exp_name: baseline
+run_name: unet_synth_ds
 
 hydra:
   job:
@@ -12,17 +12,17 @@ hydra:
 
 defaults:
   - trainer: default # loads key/value.yaml -> trainer/default.yaml
-  - logger: unet
-  - model: subpixel
+  - logger: mlflow
+  - model: unet
   - _self_ # options from this file
 
 train_dataset:
   _target_: data.datasets.dataset.MISRDataset
-  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/hradis/pruned_train.json
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/train_manifest.json
 
 val_dataset:
   _target_: data.datasets.dataset.MISRDataset
-  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/hradis/pruned_val.json
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/dev_manifest.json
 
 dataloader:
   _target_: torch.utils.data.DataLoader
