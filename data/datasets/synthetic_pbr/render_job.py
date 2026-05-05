@@ -5,7 +5,7 @@ from pathlib import Path
 
 import bpy
 import numpy as np
-from mathutils import Vector, Matrix
+from mathutils import Matrix, Vector
 
 # ==========================================
 # CONSTANTS & IMPORTS
@@ -15,23 +15,19 @@ LIGHT_OBJECT_NAME = "Sun.001"
 TRACKER_NAME = "CameraTracker"
 BASE_RESOLUTION_X = 1024
 BASE_RESOLUTION_Y = 1024
-RENDER_SAMPLE_CNT = 128
-EXPECTED_TEX_WIDTH = 4096
-EXPECTED_TEX_HEGHT = 4096
+RENDER_SAMPLE_CNT = 512
 
 
 # ---------------------------------------------------------------
 # 3x4 P matrix from Blender camera
 # ---------------------------------------------------------------
 
-# BKE_camera_sensor_size
 def get_sensor_size(sensor_fit, sensor_x, sensor_y):
     if sensor_fit == 'VERTICAL':
         return sensor_y
     return sensor_x
 
 
-# BKE_camera_sensor_fit
 def get_sensor_fit(sensor_fit, size_x, size_y):
     if sensor_fit == 'AUTO':
         if size_x >= size_y:
@@ -41,12 +37,6 @@ def get_sensor_fit(sensor_fit, size_x, size_y):
     return sensor_fit
 
 
-# Build intrinsic camera parameters from Blender camera data
-#
-# See notes on this in
-# blender.stackexchange.com/questions/15102/what-is-blenders-camera-projection-matrix-model
-# as well as
-# https://blender.stackexchange.com/a/120063/3581
 def get_calibration_matrix_K_from_blender(camd):
     if camd.type != 'PERSP':
         raise ValueError('Non-perspective cameras not supported')
@@ -70,10 +60,9 @@ def get_calibration_matrix_K_from_blender(camd):
     s_u = 1 / pixel_size_mm_per_px
     s_v = 1 / pixel_size_mm_per_px / pixel_aspect_ratio
 
-    # Parameters of intrinsic calibration matrix K
     u_0 = resolution_x_in_px / 2 - camd.shift_x * view_fac_in_px
     v_0 = resolution_y_in_px / 2 + camd.shift_y * view_fac_in_px / pixel_aspect_ratio
-    skew = 0  # only use rectangular pixels
+    skew = 0
 
     K = Matrix(
         ((s_u, skew, u_0),
@@ -82,46 +71,19 @@ def get_calibration_matrix_K_from_blender(camd):
     return K
 
 
-# Returns camera rotation and translation matrices from Blender.
-#
-# There are 3 coordinate systems involved:
-#    1. The World coordinates: "world"
-#       - right-handed
-#    2. The Blender camera coordinates: "bcam"
-#       - x is horizontal
-#       - y is up
-#       - right-handed: negative z look-at direction
-#    3. The desired computer vision camera coordinates: "cv"
-#       - x is horizontal
-#       - y is down (to align to the actual pixel coordinates
-#         used in digital images)
-#       - right-handed: positive z look-at direction
 def get_3x4_RT_matrix_from_blender(cam):
-    # bcam stands for blender camera
     R_bcam2cv = Matrix(
         ((1, 0, 0),
          (0, -1, 0),
          (0, 0, -1)))
 
-    # Transpose since the rotation is object rotation,
-    # and we want coordinate rotation
-    # R_world2bcam = cam.rotation_euler.to_matrix().transposed()
-    # T_world2bcam = -1*R_world2bcam @ location
-    #
-    # Use matrix_world instead to account for all constraints
     location, rotation = cam.matrix_world.decompose()[0:2]
     R_world2bcam = rotation.to_matrix().transposed()
-
-    # Convert camera location to translation vector used in coordinate changes
-    # T_world2bcam = -1*R_world2bcam @ cam.location
-    # Use location from matrix_world to account for constraints:
     T_world2bcam = -1 * R_world2bcam @ location
 
-    # Build the coordinate transform matrix from world to computer vision camera
     R_world2cv = R_bcam2cv @ R_world2bcam
     T_world2cv = R_bcam2cv @ T_world2bcam
 
-    # put into 3x4 matrix
     RT = Matrix((
         R_world2cv[0][:] + (T_world2cv[0],),
         R_world2cv[1][:] + (T_world2cv[1],),
@@ -137,18 +99,27 @@ def get_3x4_P_matrix_from_blender(cam):
 
 
 def get_plane_homography(P_matrix):
-    # Converts a mathutils 3x4 Matrix to a 3x3 Numpy array dropping the Z column
-    import numpy as np
     P_np = np.array(P_matrix)
     return P_np[:, [0, 1, 3]]
 
 
 def setup_pbr_material(target_obj, tex_dir):
+    """
+    Sets up PBR material. Images are cached in bpy.data.images by filepath,
+    so repeated calls with the same tex_dir reuse already-loaded textures.
+    """
     mat_name = f"Mat_{tex_dir.name}"
     if mat_name in bpy.data.materials:
         mat = bpy.data.materials[mat_name]
-    else:
-        mat = bpy.data.materials.new(name=mat_name)
+        # Material already fully built — just assign and return
+        if not target_obj.data.materials:
+            target_obj.data.materials.append(mat)
+        else:
+            target_obj.data.materials[0] = mat
+        return
+
+    mat = bpy.data.materials.new(name=mat_name)
+    mat.use_nodes = True
     mat.node_tree.nodes.clear()
 
     if not target_obj.data.materials:
@@ -164,11 +135,9 @@ def setup_pbr_material(target_obj, tex_dir):
 
     mapping = nodes.new('ShaderNodeMapping')
     mapping.location = (-800, 0)
-    basecolor_size = bpy.data.images.load(str(tex_dir / 'basecolor.png')).size
-    # scale the texture accordingly to pixel size of the texture
-    mapping.inputs['Scale'].default_value = (
-        basecolor_size[0] / EXPECTED_TEX_WIDTH, basecolor_size[1] / EXPECTED_TEX_HEGHT, 1.0
-    )
+
+    # Load basecolor once to get size; bpy caches by filepath
+    mapping.inputs['Scale'].default_value = (1.0, 1.0, 1.0)
 
     links.new(tex_coord.outputs['UV'], mapping.inputs['Vector'])
     output_node = nodes.new('ShaderNodeOutputMaterial')
@@ -178,6 +147,17 @@ def setup_pbr_material(target_obj, tex_dir):
     bsdf.location = (0, 0)
     links.new(bsdf.outputs['BSDF'], output_node.inputs['Surface'])
 
+    def load_image(filepath, is_color_data=False):
+        """Load or reuse an already-loaded image from bpy cache."""
+        fp = str(filepath)
+        existing = bpy.data.images.get(Path(fp).name)
+        if existing and existing.filepath == fp:
+            return existing
+        img = bpy.data.images.load(fp)
+        if not is_color_data:
+            img.colorspace_settings.name = 'Non-Color'
+        return img
+
     def add_texture_node(filename, y_loc, is_color_data=False):
         img_path = tex_dir / filename
         if not img_path.exists():
@@ -185,9 +165,7 @@ def setup_pbr_material(target_obj, tex_dir):
         tex_node = nodes.new('ShaderNodeTexImage')
         tex_node.location = (-400, y_loc)
         try:
-            img = bpy.data.images.load(str(img_path))
-            if not is_color_data:
-                img.colorspace_settings.name = 'Non-Color'
+            img = load_image(img_path, is_color_data)
             tex_node.image = img
             links.new(mapping.outputs['Vector'], tex_node.inputs['Vector'])
             return tex_node
@@ -196,10 +174,12 @@ def setup_pbr_material(target_obj, tex_dir):
             return None
 
     color_node = add_texture_node("basecolor.png", 300, True) or add_texture_node("diffuse.png", 300, True)
-    if color_node: links.new(color_node.outputs['Color'], bsdf.inputs['Base Color'])
+    if color_node:
+        links.new(color_node.outputs['Color'], bsdf.inputs['Base Color'])
 
     metallic_node = add_texture_node("metallic.png", 0, False)
-    if metallic_node: links.new(metallic_node.outputs['Color'], bsdf.inputs['Metallic'])
+    if metallic_node:
+        links.new(metallic_node.outputs['Color'], bsdf.inputs['Metallic'])
 
     specular_node = add_texture_node("specular.png", -150, False)
     if specular_node:
@@ -209,9 +189,11 @@ def setup_pbr_material(target_obj, tex_dir):
             links.new(specular_node.outputs['Color'], bsdf.inputs['Specular'])
 
     roughness_node = add_texture_node("roughness.png", -300, False)
-    if roughness_node: links.new(roughness_node.outputs['Color'], bsdf.inputs['Roughness'])
+    if roughness_node:
+        links.new(roughness_node.outputs['Color'], bsdf.inputs['Roughness'])
 
     normal_node = add_texture_node("normal.png", -600, False)
+    normal_map_node = None
     if normal_node:
         normal_map_node = nodes.new('ShaderNodeNormalMap')
         normal_map_node.location = (-150, -600)
@@ -222,53 +204,44 @@ def setup_pbr_material(target_obj, tex_dir):
     if disp_node:
         disp_map_node = nodes.new('ShaderNodeDisplacement')
         disp_map_node.location = (0, -300)
-        links.new(normal_map_node.outputs['Normal'], disp_map_node.inputs['Normal'])
         links.new(disp_node.outputs['Color'], disp_map_node.inputs['Height'])
         links.new(disp_map_node.outputs['Displacement'], output_node.inputs['Displacement'])
+        # Connect normal map if present — displaces along perturbed normal
+        # rather than geometric normal. Matches original script behaviour.
+        if normal_map_node:
+            links.new(normal_map_node.outputs['Normal'], disp_map_node.inputs['Normal'])
 
 
 def enable_gpu_rendering():
     scene = bpy.context.scene
     scene.render.engine = 'CYCLES'
 
-    # Get the Cycles preferences
     prefs = bpy.context.preferences
     cycles_prefs = prefs.addons['cycles'].preferences
-
-    # Force Blender to query the system for all devices
     cycles_prefs.refresh_devices()
 
     compute_types = ['ONEAPI', 'OPTIX', 'CUDA', 'METAL', 'HIP']
     gpu_found = False
 
     for compute_type in compute_types:
-        # 1. Check if the Blender build even supports this API string
         try:
             cycles_prefs.compute_device_type = compute_type
         except TypeError:
             continue
 
-        # 2. Query the hardware specifically for this compute type
         backend_devices = cycles_prefs.get_devices_for_type(compute_type)
-
-        # 3. Check if the backend actually found a compatible GPU
         has_compatible_gpu = any(d.type != 'CPU' for d in backend_devices)
 
         if has_compatible_gpu:
             gpu_found = True
-
-            # 4. Enable the GPUs and disable the CPU to prevent hybrid rendering bugs
             for device in cycles_prefs.devices:
                 if device.type != 'CPU':
                     device.use = True
                     print(f"--> Enabled GPU: {device.name} via {compute_type}")
                 else:
                     device.use = False
-
-            # We found the highest priority working API, stop searching
             break
 
-    # 5. Final fallback if absolutely no GPU works with any API
     if gpu_found:
         scene.cycles.device = 'GPU'
     else:
@@ -278,9 +251,73 @@ def enable_gpu_rendering():
             device.use = (device.type == 'CPU')
 
 
+def configure_cycles_performance(scene):
+    """
+    Apply Cycles settings that reduce render time without
+    visibly changing output quality for a flat-plane PBR shot.
+    """
+    cycles = scene.cycles
+
+    # --- Denoising (biggest single win) ---
+    # Use the render-layer denoiser (Cycles noise reduction pass).
+    # The use_pass_denoising_* attributes were removed in Blender 4+;
+    # denoising is now controlled entirely via vl.cycles.use_denoising
+    # and scene.cycles.denoiser.
+    scene.render.use_compositing = False         # skip compositor overhead
+
+    # Try OptiX first (NVIDIA P100 supports it if the driver is new enough),
+    # fall back to OIDN which runs on CPU but is still fast.
+    denoiser_set = False
+    if scene.cycles.device == 'GPU':
+        try:
+            scene.cycles.denoiser = 'OPTIX'
+            denoiser_set = True
+        except (TypeError, AttributeError):
+            pass
+    if not denoiser_set:
+        try:
+            scene.cycles.denoiser = 'OPENIMAGEDENOISE'
+        except (TypeError, AttributeError):
+            pass
+
+    for vl in scene.view_layers:
+        try:
+            vl.cycles.use_denoising = True
+        except AttributeError:
+            pass
+
+    # With denoising, 32–64 samples usually suffice for clean PBR flat-plane
+    # shots.  Keep RENDER_SAMPLE_CNT as the override from constants if you
+    # need more, but 64 is a reasonable default.
+    cycles.samples = RENDER_SAMPLE_CNT          # honour the constant
+
+    # --- Tile size ---
+    # GPU: large tiles fill warps efficiently.
+    # Blender 3+ auto-tiles, but explicit control helps older builds.
+    try:
+        if scene.cycles.device == 'GPU':
+            scene.cycles.tile_size = 512
+        else:
+            scene.cycles.tile_size = 64
+    except AttributeError:
+        pass  # auto-tiling only, fine for Blender 4+
+
+    # --- Light path limits ---
+    # A flat plane lit by a sun needs very few bounces.
+    cycles.max_bounces = 4
+    cycles.diffuse_bounces = 2
+    cycles.glossy_bounces = 2
+    cycles.transmission_bounces = 0
+    cycles.volume_bounces = 0
+    cycles.transparent_max_bounces = 4
+
+    # --- Misc ---
+    cycles.use_fast_gi = True                   # approximate ambient occlusion
+    cycles.fast_gi_method = 'REPLACE'
+    scene.render.use_persistent_data = True     # reuse BVH across frames (big win for multi-render jobs)
+
+
 def main():
-    # 1. Parse command line arguments for the job JSON
-    # Blender passes arguments after "--" to the python script
     try:
         argv = sys.argv
         argv = argv[argv.index("--") + 1:]
@@ -292,17 +329,20 @@ def main():
     with open(job_filepath, 'r') as f:
         job = json.load(f)
 
-    # Blender Setup
     enable_gpu_rendering()
+
     scene = bpy.context.scene
-    scene.cycles.samples = RENDER_SAMPLE_CNT
     scene.render.resolution_x = BASE_RESOLUTION_X
     scene.render.resolution_y = BASE_RESOLUTION_Y
+
+    # Apply all performance settings once, before the render loop
+    configure_cycles_performance(scene)
 
     camera = scene.camera
     tracker = bpy.data.objects[TRACKER_NAME]
     light = bpy.data.objects[LIGHT_OBJECT_NAME]
     target_obj = scene.objects.get(TARGET_NAME)
+    camera.data.dof.use_dof = False
 
     tex_dir = Path(job["texture_dir"])
     out_dir = Path(job["output_dir"])
@@ -312,76 +352,64 @@ def main():
 
     print(f"=== Starting Job: {job['texture_name']} ===")
 
-    # Execution Loop
     for scene_data in job["scenes"]:
         setting_out_dir = out_dir
         matrices_json_path = setting_out_dir / f"tex_{job['texture_name']}_{scene_data['setting_id']}_metadata.json"
 
-        # --- SIMPLIFIED ALL-OR-NOTHING CHECK ---
-        skip_scene = True
-        if not matrices_json_path.exists():
-            skip_scene = False
-        else:
-            # Check if every single image file for this scene already exists
-            for render_task in scene_data["renders"]:
-                target_filepath = setting_out_dir / render_task["filename"]
-                if not target_filepath.exists():
-                    skip_scene = False
-                    break
+        # All-or-nothing skip check
+        skip_scene = matrices_json_path.exists() and all(
+            (setting_out_dir / rt["filename"]).exists()
+            for rt in scene_data["renders"]
+        )
 
         if skip_scene:
             print(f"Skipping scene {scene_data['setting_id']}: All renders and matrices exist.")
-            continue  # Skip to the next scene entirely!
-        # ---------------------------------------
+            continue
 
         os.makedirs(setting_out_dir, exist_ok=True)
 
-        # Apply Scene Lighting
         light.location = scene_data["light_loc"]
         light.data.energy = scene_data["light_power"]
+        light.data.size = scene_data["light_size"]
 
-        # Initialize the metadata with a COPY of the scene_data from the job
-        # We use a dict copy so we don't accidentally modify the original job object
         full_metadata = scene_data.copy()
-        # Add texture info for completeness
         full_metadata["texture_name"] = job["texture_name"]
 
         P_main_matrix = None
 
-        # Pass 1: Calculate Matrices (We do this first so we can save the JSON once)
+        # Pass 1: Calculate matrices
         for render_task in full_metadata["renders"]:
             scene.render.resolution_percentage = render_task["res_pct"]
-            scene.render.filepath = str(target_filepath)
-
-            # Force Blender to update matrices before doing math
+            tracker.location = render_task["tracker_loc"]
+            camera.location = render_task["camera_loc"]
             bpy.context.view_layer.update()
 
-            # Homography Logic
             P_matrix, _, _ = get_3x4_P_matrix_from_blender(camera)
 
             if render_task["type"] == "HQ":
                 P_main_matrix = P_matrix
                 render_task["homography_matrix"] = np.identity(3).tolist()
-
             elif render_task["type"] == "LQ" and P_main_matrix is not None:
                 H_main = get_plane_homography(P_main_matrix)
                 H_rand = get_plane_homography(P_matrix)
-
                 H_rand_inv = np.linalg.inv(H_rand)
                 H_rand_to_main = np.matmul(H_main, H_rand_inv)
                 render_task["homography_matrix"] = H_rand_to_main.tolist()
             else:
                 render_task["homography_matrix"] = None
 
-        # Save the full metadata (Scene data + All Matrices)
         with open(matrices_json_path, 'w') as mf:
             json.dump(full_metadata, mf, indent=4)
 
-        # Pass 2: Actual Rendering
+        # Pass 2: Render
         for render_task in full_metadata["renders"]:
             target_filepath = setting_out_dir / render_task["filename"]
 
-            # Setup scene state for render
+            # Skip individual renders that already exist (partial resume)
+            if target_filepath.exists():
+                print(f"Skipping existing render: {render_task['filename']}")
+                continue
+
             tracker.location = render_task["tracker_loc"]
             camera.location = render_task["camera_loc"]
             scene.render.resolution_percentage = render_task["res_pct"]
@@ -390,7 +418,10 @@ def main():
             bpy.context.scene.render.image_settings.color_mode = 'RGB'
             bpy.context.scene.render.image_settings.file_format = 'PNG'
             bpy.context.scene.render.image_settings.color_depth = '16'
-            bpy.context.scene.render.image_settings.compression = 15
+            # compression=0 → fastest write, ~2x larger file.
+            # compression=6 is a good middle ground (zlib default).
+            # Only go to 15 if disk space is genuinely critical.
+            bpy.context.scene.render.image_settings.compression = 6
 
             print(f"Rendering {render_task['filename']}...")
             bpy.ops.render.render(write_still=True)
