@@ -32,9 +32,13 @@ class BaseLogger(ABC):
         if self.accelerator is None or self.accelerator.is_main_process:
             self._log_hyperparameters(params)
 
-    def log_image(self, image: str, name: str):
+    def log_image(self, image, name: str):
         if self.accelerator is None or self.accelerator.is_main_process:
             self._log_image(image, name)
+
+    def log_figure(self, figure, name: str):
+        if self.accelerator is None or self.accelerator.is_main_process:
+            self._log_figure(figure, name)
 
     def log_model(self, model, name: str):
         if self.accelerator is None or self.accelerator.is_main_process:
@@ -50,7 +54,11 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    def _log_image(self, image: str, name: str):
+    def _log_figure(self, figure, name: str):
+        pass
+
+    @abstractmethod
+    def _log_image(self, image, name: str):
         pass
 
     @abstractmethod

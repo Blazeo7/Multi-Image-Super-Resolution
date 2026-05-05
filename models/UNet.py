@@ -12,11 +12,11 @@ def double_convolution(in_channels, out_channels):
 
 
 class UNet(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, out_channels, num_frames=6):
         super(UNet, self).__init__()
+        in_channels = num_frames*3
         self.max_pool2d = nn.MaxPool2d(kernel_size=2, stride=2)
-        # expects 5 RGB images, if there is not enough images insert blanks
-        self.down_conv1 = double_convolution(15, 64)
+        self.down_conv1 = double_convolution(in_channels, 64)
         self.down_conv2 = double_convolution(64, 128)
         self.down_conv3 = double_convolution(128, 256)
         self.down_conv4 = double_convolution(256, 512)
@@ -31,7 +31,7 @@ class UNet(nn.Module):
         self.up_conv4 = double_convolution(128, 64)
 
         self.sr_upsample = nn.ConvTranspose2d(64, 64, kernel_size=2, stride=2)
-        self.out = nn.Conv2d(64, num_classes, kernel_size=1)
+        self.out = nn.Conv2d(64, out_channels, kernel_size=1)
 
     def forward(self, x):
         down1 = self.down_conv1(x)
@@ -56,7 +56,7 @@ class UNet(nn.Module):
 
 if __name__ == '__main__':
     input_image = torch.rand((1, 15, 512, 512))
-    model = UNet(num_classes=3)
+    model = UNet(out_channels=3)
     # Total parameters and trainable parameters.
     total_params = sum(p.numel() for p in model.parameters())
     print(f"{total_params:,} total parameters.")

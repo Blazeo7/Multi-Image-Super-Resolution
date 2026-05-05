@@ -1,15 +1,16 @@
-from datetime import datetime as dt
 import logging
 import os
+from datetime import datetime as dt
+
 import numpy as np
+import torch
+from accelerate import Accelerator
 from omegaconf import DictConfig
 from torch import nn
-import torch
 from torch.utils.data import DataLoader
-
-from evaluator import InferenceEngine, MetricTracker, Visualizer
 from tqdm import tqdm
 
+from evaluator import InferenceEngine, MetricTracker, Visualizer
 from loggers.base_logger import BaseLogger
 
 log = logging.getLogger(__name__)
@@ -22,22 +23,26 @@ class Evaluator:
         dataset: torch.utils.data.Dataset,
         cfg: DictConfig,
         logger: BaseLogger,
+        loader: DataLoader,
+        accelerator: Accelerator,
+        metric_prefix,
     ):
         self.cfg = cfg
         self.setup_logging_directory(model, self.cfg.paths.base_save_dir)
         self.logger = logger
+        self.loader = loader
+        self.metric_prefix = metric_prefix
 
-        self.loader = DataLoader(dataset, batch_size=self.cfg.hardware.batch_size, shuffle=False)
         self.viz_count = self.cfg.visualization.num_samples
 
         self.inference = InferenceEngine(model, cfg)
-        self.metrics = MetricTracker(cfg)
+        self.metrics = MetricTracker(cfg, accelerator)
         self.visualizer = Visualizer(self.model_eval_dir, cfg, logger)
 
     def setup_logging_directory(self, model: nn.Module, save_dir: str):
         model_name = model.__class__.__name__
         self.model_eval_dir = os.path.join(save_dir, f"{model_name}")
-        os.makedirs(self.model_eval_dir)
+        os.makedirs(self.model_eval_dir, exist_ok=True)
 
     def run(self):
         self.metrics.reset()
@@ -56,8 +61,12 @@ class Evaluator:
             pbar.set_postfix(PSNR=f"{self.metrics.compute_averages()['PSNR']:.2f}")
 
         avg_metrics = self.metrics.compute_averages()
+        if self.metric_prefix:
+            # prepend with prefix if provided (logging purposes)
+            avg_metrics = {f"{self.metric_prefix}/{k}": v for k, v in avg_metrics.items()}
+
         self.metrics.save_metrics_csv(self.model_eval_dir)
-        self.logger._log_metrics(avg_metrics, step=0)
+        self.logger.log_metrics(avg_metrics, step=0)
 
         indices = self._get_indices_by_viz_type()
         self.visualizer.save(indices, self.metrics.results_history)

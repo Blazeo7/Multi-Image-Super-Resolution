@@ -1,0 +1,31 @@
+exp_name: baseline
+run_name: subpixelnet_real_ds
+eval_metric_prefix: real
+
+hydra:
+  job:
+    chdir: True
+  run:
+    dir: outputs/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: multirun/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+defaults:
+  - evaluator: default
+  - model: subpixel
+  - logger: mlflow
+  - _self_
+
+dataset:
+  _target_: data.datasets.dataset.MISRDataset
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/hradis/test.json
+
+dataloader:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 16
+  num_workers: 0
+  pin_memory: true
+
+checkpoint_path: "/pub/users/xnguye28/knn-sr/outputs/train_2026-04-11_02-01-01/checkpoints/12"
+

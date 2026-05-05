@@ -39,6 +39,11 @@ class MLflowLogger(BaseLogger):
             name = f"{name}.png"
         mlflow.log_image(image, name)
 
+    def _log_figure(self, figure, name: str):
+        if not name.endswith((".png", ".jpg", ".jpeg")):
+            name = f"{name}.png"
+        mlflow.log_figure(figure, name)
+
     def _log_model(self, model, name: str):
         mlflow_pytorch.log_model(model, name)
 

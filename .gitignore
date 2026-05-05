@@ -178,10 +178,11 @@ pyrightconfig.json
 outputs/
 .DS_Store
 mlflow.db
-/data/datasets/Blender_generated/blender_dataset_renders
-/data/datasets/Blender_generated/extracted_textures/train
-/data/datasets/Blender_generated/jobs
-/data/datasets/Blender_generated/matsynth_train_subset/data
+
 /data/datasets/synthetic_pbr/extracted_textures/train
 /data/datasets/synthetic_pbr/jobs
 /data/datasets/synthetic_pbr/matsynth_train_subset/data
+/data/raw/synthetic
+/mlruns
+/data/raw
+/data/manifests
