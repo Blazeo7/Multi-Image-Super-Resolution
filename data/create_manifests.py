@@ -2,129 +2,142 @@ import argparse
 import json
 import random
 from pathlib import Path
+from collections import defaultdict
+from typing import Dict, List, Any, Tuple, TypeAlias
+
+# Represents a single scene entry
+SampleData: TypeAlias = Dict[str, Any]
+# Represents a collection of scenes keyed by a unique identifier (ID or Path)
+SampleGroup: TypeAlias = Dict[str, List[SampleData]]
 
 
-def extract_id(filename):
-    """
-    Strips known suffixes to isolate the unique texture base name.
-    Example: 'tex_0004_particle_board_angle_000_LQ_aligned.png' -> 'tex_0004_particle_board'
-    """
-    name = Path(filename).stem
-    suffixes = ['_deadon', '_angle', '_LQ', '_LR', '_aligned', '_HQ']
-    
-    base = name
-    for s in suffixes:
-        if s in base:
-            base = base.split(s)[0]
-    return base
+def get_metadata_groups(input_dir: Path, split_by: str) -> SampleGroup:
+    """Scans directory and groups metadata entries by texture_id or file path."""
+    groups: SampleGroup = defaultdict(list)
 
-def create_manifests(args):
-    # .resolve() turns the input path into an absolute path
+    if not input_dir.exists():
+        return groups
+
+    texture_dirs = [d for d in input_dir.iterdir() if d.is_dir()]
+
+    for tex_dir in texture_dirs:
+        texture_id = tex_dir.name
+        metadata_files = list(tex_dir.glob("*_metadata.json"))
+
+        for meta_path in metadata_files:
+            # Grouping logic
+            group_key = texture_id if split_by == "texture" else str(meta_path)
+
+            sample: SampleData = {
+                "texture_id": texture_id,
+                "base_dir": f"{input_dir.name}/{texture_id}/",
+                "metadata_path": meta_path.name,
+            }
+            groups[group_key].append(sample)
+
+    return groups
+
+
+def calculate_split_indices(
+    total_units: int, test_ratio: float, dev_ratio: float
+) -> Tuple[int, int, int]:
+    """Determines split sizes with a 1-unit minimum safety."""
+    if total_units == 0:
+        return 0, 0, 0
+
+    n_test = max(1, int(total_units * test_ratio)) if test_ratio > 0 else 0
+    n_dev = max(1, int(total_units * dev_ratio)) if dev_ratio > 0 else 0
+
+    if (n_test + n_dev) >= total_units:
+        n_train = 1 if total_units >= 3 else total_units
+        n_test = 1 if total_units >= 2 else 0
+        n_dev = 1 if total_units >= 3 else 0
+    else:
+        n_train = total_units - n_test - n_dev
+
+    return n_train, n_test, n_dev
+
+
+def partition_keys(
+    keys: List[str], test_split: float, dev_split: float, seed: int
+) -> Dict[str, List[str]]:
+    """Shuffles and splits keys into train, test, and dev sets."""
+    random.seed(seed)
+    shuffled_keys = list(keys)
+    random.shuffle(shuffled_keys)
+
+    n_train, n_test, _ = calculate_split_indices(len(shuffled_keys), test_split, dev_split)
+
+    return {
+        "train": shuffled_keys[:n_train],
+        "test": shuffled_keys[n_train : n_train + n_test],
+        "dev": shuffled_keys[n_train + n_test :],
+    }
+
+
+def save_manifest(
+    output_path: Path,
+    samples: List[SampleData],
+    args: argparse.Namespace,
+    split_name: str,
+    key_count: int,
+):
+    """Formats and writes the manifest to disk."""
+    samples.sort(key=lambda x: (x["texture_id"], x["metadata_path"]))
+
+    content = {
+        "scale_factor": args.scale,
+        "num_aligned_images": args.n_supporting,
+        "split_method": args.split_by,
+        "samples": samples,
+    }
+
+    with open(output_path, "w") as f:
+        json.dump(content, f, indent=4)
+
+    status_label = "textures" if args.split_by == "texture" else "samples"
+    if args.split_by == "texture":
+        print(f"[{split_name.upper()}] {key_count} {status_label} -> {len(samples)} total samples.")
+    else:
+        print(f"[{split_name.upper()}] {len(samples)} samples.")
+
+
+def create_manifests(args: argparse.Namespace):
+    """Main execution flow."""
     root = Path(args.input_dir).resolve()
-    hr_dir = root / "hr"
-    lr_dir = root / "lr"
-    
     out_dir = Path(args.output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    data_map = {}
-
-    if not hr_dir.exists():
-        print(f"Error: HR directory not found at {hr_dir}")
+    # Gather
+    groups: SampleGroup = get_metadata_groups(root, args.split_by)
+    if not groups:
+        print(f"Error: No valid data found in {root}")
         return
 
-    for hr_file in hr_dir.glob("*.png"):
-        tex_id = extract_id(hr_file.name)
-        # Convert to absolute path string
-        data_map[tex_id] = {
-            "target": str(hr_file.resolve()),
-            "reference": None,
-            "supporting": []
-        }
+    # Split
+    split_map = partition_keys(list(groups.keys()), args.test_split, args.dev_split, args.seed)
 
-    if not lr_dir.exists():
-        print(f"Error: LR directory not found at {lr_dir}")
-        return
-
-    for lr_file in lr_dir.glob("*.png"):
-        tex_id = extract_id(lr_file.name)
-        
-        if tex_id not in data_map:
+    # Save
+    for split_name, keys in split_map.items():
+        if not keys:
             continue
 
-        # Convert to absolute path string
-        abs_lr_path = str(lr_file.resolve())
+        split_samples: List[SampleData] = [s for k in keys for s in groups[k]]
+        save_manifest(
+            out_dir / f"{split_name}_manifest.json", split_samples, args, split_name, len(keys)
+        )
 
-        if "deadon_LR" in lr_file.name or "deadon_LR" in lr_file.name.upper():
-            data_map[tex_id]["reference"] = abs_lr_path
-        elif "aligned" in lr_file.name:
-            data_map[tex_id]["supporting"].append(abs_lr_path)
-
-    valid_ids = []
-    for tex_id, paths in data_map.items():
-        has_target = paths["target"] is not None
-        has_ref = paths["reference"] is not None
-        actual_count = len(paths["supporting"])
-        
-        if has_target and has_ref and actual_count == args.n_supporting:
-            valid_ids.append(tex_id)
-        else:
-            if args.verbose:
-                reason = "missing HR/LR" if not (has_target and has_ref) else f"had {actual_count} supporting"
-                print(f"Dropping {tex_id}: {reason}")
-
-    random.seed(42)
-    random.shuffle(valid_ids)
-
-    total = len(valid_ids)
-    if total == 0:
-        print(f"No samples matched criteria (N={args.n_supporting}). Check filenames or N value.")
-        return
-
-    train_end = int(total * args.train_split)
-    test_end = train_end + int(total * args.test_split)
-
-    splits = {
-        "train": valid_ids[:train_end],
-        "test": valid_ids[train_end:test_end],
-        "dev": valid_ids[test_end:]
-    }
-
-    for split_name, ids in splits.items():
-        if not ids: continue
-        
-        samples = []
-        for tex_id in ids:
-            entry = data_map[tex_id]
-            samples.append({
-                "id": tex_id,
-                "reference": entry["reference"],
-                "supporting": sorted(entry["supporting"]),
-                "target": entry["target"]
-            })
-
-        manifest = {
-            "scale_factor": args.scale,
-            "num_aligned_images": args.n_supporting,
-            "samples": samples
-        }
-
-        output_path = out_dir / f"{split_name}_manifest.json"
-        with open(output_path, "w") as f:
-            json.dump(manifest, f, indent=4)
-        
-        print(f"Created {output_path} with {len(samples)} samples.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Create ML manifests from HR/LR texture pairs.")
-    parser.add_argument("--input_dir", type=str, default="./", help="Root dir containing 'hr' and 'lr' folders")
-    parser.add_argument("--output_dir", type=str, default="./manifests", help="Where to save JSON files")
-    parser.add_argument("-n", "--n_supporting", type=int, default=4, help="Exact number of supporting images required")
-    parser.add_argument("--scale", type=int, default=2, help="Scale factor for manifest header")
+    parser = argparse.ArgumentParser(description="Cleaned Texture Manifest Creator")
+    parser.add_argument("--input_dir", type=str, default="./samples")
+    parser.add_argument("--output_dir", type=str, default="./data/manifests")
+    parser.add_argument("--split_by", type=str, choices=["texture", "sample"], default="texture")
+    parser.add_argument("-n", "--n_supporting", type=int, default=4)
+    parser.add_argument("--scale", type=int, default=2)
     parser.add_argument("--train_split", type=float, default=0.8)
     parser.add_argument("--test_split", type=float, default=0.1)
     parser.add_argument("--dev_split", type=float, default=0.1)
-    parser.add_argument("-v", "--verbose", action="store_true", help="Print dropped IDs")
+    parser.add_argument("--seed", type=int, default=42)
 
-    args = parser.parse_args()
-    create_manifests(args)
+    create_manifests(parser.parse_args())
