@@ -170,4 +170,4 @@ class TransformerMISR(nn.Module):
         out = self.decoder(z.permute(0, 3, 1, 2))  # (B, C_out, H*scale_factor, W*scale_factor)
         padding_mask = padding_mask.reshape(B, H, W, num_lr + 1).permute(0, 3, 1, 2)  # (B, num_lr, H, W)
 
-        return out, padding_mask
+        return out
