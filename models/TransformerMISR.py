@@ -25,19 +25,25 @@ class HighResNetEncoder(nn.Module):
             ]
         )
 
-    def forward(self, x):
+    def forward(self, x, padding_mask):
         """
         Args:
             x: (B, num_lr, C, H, W)
+            padding_mask: (B, num_lr, H, W) where True indicates positions to be masked.
 
         Returns:
             (B, num_lr, hidden_dim, H, W)
         """
         B, K, C, H, W = x.shape
 
-        lr_ref, _ = torch.median(x, dim=1, keepdim=True)  # (B, 1, C_in, H, W)
-        lr_ref = lr_ref.expand(-1, x.shape[1], -1, -1, -1)  # (B, num_lr, C_in, H, W)
-        lr = torch.cat([x, lr_ref], dim=2)  # (B, num_lr, 2*C_in, H, W)
+        mask = padding_mask.unsqueeze(2).expand_as(x)  # (B, num_lr, C, H, W)
+        x_for_median = x.masked_fill(mask, float("nan"))
+        x_clean = x.masked_fill(mask, 0.0)
+
+        lr_ref, _ = torch.nanmedian(x_for_median, dim=1, keepdim=True)  # (B, 1, C_in, H, W)
+        lr_ref = lr_ref.nan_to_num(0.0)  # replace NaNs with zeros for masked positions
+
+        lr = torch.cat([x_clean, lr_ref], dim=2)  # (B, num_lr, 2*C_in, H, W)
 
         # collapse dimensions for proper convolution
         lr = lr.view(B * K, 2 * C, H, W)
@@ -72,7 +78,7 @@ class TransformerEncoder(nn.Module):
         self.norm1 = nn.LayerNorm(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
 
-    def forward(self, x, padding_mask):
+    def forward(self, x, padding_mask=None):
         """
         Args:
             x: (B, S, embed_dim)
@@ -103,6 +109,7 @@ class TransformerMISR(nn.Module):
         hidden_dim,
         num_transformer_blocks,
         mha_heads,
+        ffn_hidden_dim,
         num_residual_blocks,
         in_channels=3,
     ):
@@ -114,7 +121,10 @@ class TransformerMISR(nn.Module):
             out_channels=hidden_dim,
         )
         self.transformers = nn.ModuleList(
-            [TransformerEncoder(hidden_dim, mha_heads, ffn_hidden_dim=128) for _ in range(num_transformer_blocks)]
+            [
+                TransformerEncoder(hidden_dim, mha_heads, ffn_hidden_dim=ffn_hidden_dim)
+                for _ in range(num_transformer_blocks)
+            ]
         )
         self.decoder = nn.Sequential(
             nn.Conv2d(hidden_dim, in_channels * (upscale_factor**2), kernel_size=1),
@@ -123,24 +133,19 @@ class TransformerMISR(nn.Module):
         )
 
         self.x0 = nn.Parameter(torch.empty(1, 1, hidden_dim), requires_grad=True)
-        nn.init.uniform_(self.x0)
-
-        self.scale_factor = upscale_factor
-        self.hidden_dim = hidden_dim
-        self.num_residual_blocks = num_residual_blocks
-        self.num_channels = in_channels
+        nn.init.trunc_normal_(self.x0, std=0.02)
 
     def forward(self, x, padding_mask):
         """
         Args:
             x: (B, num_lr, C_in, H, W)
-            padding_mask: (B, num_lr, H, W)
+            padding_mask: (B, num_lr, H, W), where True indicates positions to be masked.
 
         Returns:
             (B, C_out, H*scale_factor, W*scale_factor)
         """
 
-        f = self.encoder.forward(x)  # (B, num_lr, hidden_dim, H, W)
+        f = self.encoder(x, padding_mask)  # (B, num_lr, hidden_dim, H, W)
 
         B, num_lr, hidden_dim, H, W = f.shape
         L = B * H * W
@@ -160,14 +165,13 @@ class TransformerMISR(nn.Module):
         padding_mask = padding_mask.reshape(B * H * W, num_lr + 1)  # (L, num_lr + 1)
 
         for t in self.transformers:
-            f = t.forward(f, padding_mask=padding_mask)  # (L, num_lr + 1, hidden_dim)
+            f = t(f, padding_mask=padding_mask)  # (L, num_lr + 1, hidden_dim)
 
-        # reconstruct
+        # reconstruct spatial dimensions
         f_spatial = f.reshape(B, H, W, num_lr + 1, hidden_dim)
         z = f_spatial[:, :, :, 0, :]  # (B, H, W, hidden_dim)
 
         # sub-pixel convolution
         out = self.decoder(z.permute(0, 3, 1, 2))  # (B, C_out, H*scale_factor, W*scale_factor)
-        padding_mask = padding_mask.reshape(B, H, W, num_lr + 1).permute(0, 3, 1, 2)  # (B, num_lr, H, W)
 
         return out
