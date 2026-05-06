@@ -62,6 +62,31 @@ class MISRDataset(Dataset):
 
         self._log_configuration()
 
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        renders = self._get_renders_metadata(sample)
+
+        lr_list, hr_hsv = self._process_frames(sample["base_dir"], renders)
+
+        # Augment only non-reference images
+        lr_list = [lr_list[0]] + self._apply_photometric_augmentations(lr_list[1:])
+
+        np.random.shuffle(lr_list)
+        input_stack = np.stack(lr_list)
+
+        full_tensor = torch.from_numpy(input_stack).permute(0, 3, 1, 2).float()
+        target_tensor = torch.from_numpy(hr_hsv).permute(2, 0, 1).float()
+
+        # Split LR images and Mask
+        lr_hsv = full_tensor[:, :3, :, :]
+        lr_masks = full_tensor[:, 3:, :, :] / 255.0  # Normalize mask to [0, 1]
+
+        # Normalize and Return
+        return self._normalize_hsv(lr_hsv), self._normalize_hsv(target_tensor), lr_masks
+
     def _load_manifest(self, path: str) -> dict:
         with open(path, "r") as f:
             return json.load(f)
@@ -87,26 +112,6 @@ class MISRDataset(Dataset):
             "dataset_lr_size": str(self.lr_size),
         }
         self.logger.info(f"Dataset Configured: {config}")
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        sample = self.samples[idx]
-        renders = self._get_renders_metadata(sample)
-
-        lr_list, hr_hsv = self._process_frames(sample["base_dir"], renders)
-
-        # Augment only non-reference images
-        lr_list = [lr_list[0]] + self._apply_photometric_augmentations(lr_list[1:])
-
-        np.random.shuffle(lr_list)
-        input_stack = np.stack(lr_list)
-
-        input_tensor = torch.from_numpy(input_stack).permute(0, 3, 1, 2).float()
-        target_tensor = torch.from_numpy(hr_hsv).permute(2, 0, 1).float()
-
-        return self._normalize_hsv(input_tensor), self._normalize_hsv(target_tensor)
 
     def _get_renders_metadata(self, sample):
         """Loads metadata and handles padding/slicing of render list."""
