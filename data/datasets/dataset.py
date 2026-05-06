@@ -1,3 +1,6 @@
+import logging
+from typing import Optional, Tuple
+
 import cv2
 import numpy as np
 import torch
@@ -7,34 +10,91 @@ from torch.utils.data import Dataset
 
 
 class MISRDataset(Dataset):
-    def __init__(self, manifest_path, lr_size=(256, 256), hq_size=(1024, 1024), num_lr_images=8):
+    def __init__(
+        self,
+        manifest_path: str,
+        scale_factor: Optional[int] = None,
+        hq_size: Tuple[int, int] = (1024, 1024),
+        num_lr_images: Optional[int] = None,
+    ):
         """
+        This class loads sample metadata from a JSON manifest. Key parameters
+        (num_lr_images, lr_size) can be explicitly passed to the constructor
+        to override the defaults stored in the manifest file.
+
         Expects a manifest file in JSON format with the following structure:
             {
                 "scale_factor": 2,
                 "num_aligned_images": 4,
+                "split_method": "texture",
                 "samples": [
                     {
-                        "path": "path/to/lr/images_dir",
-                        "path_to_metadata": "path/to/metadata.json"
+                        "texture_id": "texture_01",
+                        "base_dir": "path/to/images_dir",
+                        "metadata_path": "metadata.json"
                     },
                     ...
                 ]
             }
         """
+        self.logger = logging.getLogger("MISRDataset")
+        self.manifest = self._load_manifest(manifest_path)
+        self.samples = self.manifest.get("samples", [])
 
-        with open(manifest_path, "r") as f:
-            self.samples = json.load(f)["samples"]
-        self.lr_size = lr_size
+        # Setup Hyperparameters
         self.hq_size = hq_size
-        self.num_lr_images = num_lr_images
+        self.scale_factor = self._determine_scale(scale_factor)
+        self.num_lr_images = self._determine_num_images(num_lr_images)
+        self.lr_size = self._calculate_lr_size()
+
+        self._log_configuration()
+
+    def _load_manifest(self, path: str) -> dict:
+        with open(path, "r") as f:
+            return json.load(f)
+
+    def _determine_scale(self, override_scale: Optional[int]) -> int:
+        """Returns override scale if provided, else manifest scale, defaulting to 2."""
+        return override_scale if override_scale is not None else self.manifest.get("scale_factor", 2)
+
+    def _determine_num_images(self, override_num: Optional[int]) -> int:
+        """Returns override image count if provided, else manifest count."""
+        return override_num if override_num is not None else self.manifest.get("num_aligned_images")
+
+    def _calculate_lr_size(self) -> Tuple[int, int]:
+        """Calculates symmetric LR resolution based on HQ size and scale factor."""
+        h, w = self.hq_size
+        return (h // self.scale_factor, w // self.scale_factor)
+
+    def _log_configuration(self):
+        config = {
+            "dataset_scale_factor": self.scale_factor,
+            "dataset_num_lr_images": self.num_lr_images,
+            "dataset_hq_size": str(self.hq_size),
+            "dataset_lr_size": str(self.lr_size),
+        }
+        self.logger.info(f"Dataset Configured: {config}")
 
     def __len__(self):
         return len(self.samples)
 
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        renders = self._get_renders_metadata(sample)
+
+        lr_list, hr_hsv = self._process_frames(sample["base_dir"], renders)
+
+        np.random.shuffle(lr_list)
+        input_stack = np.stack(lr_list)
+
+        input_tensor = torch.from_numpy(input_stack).permute(0, 3, 1, 2).float()
+        target_tensor = torch.from_numpy(hr_hsv).permute(2, 0, 1).float()
+
+        return self._normalize_hsv(input_tensor), self._normalize_hsv(target_tensor)
+
     def _get_renders_metadata(self, sample):
         """Loads metadata and handles padding/slicing of render list."""
-        meta_path = os.path.join(sample["path"], sample["path_to_metadata"])
+        meta_path = os.path.join(sample["base_dir"], sample["metadata_path"])
         with open(meta_path, "r") as f:
             meta = json.load(f)
 
@@ -87,18 +147,3 @@ class MISRDataset(Dataset):
         tensor[..., 0, :, :] /= 179.0
         tensor[..., 1:, :, :] /= 255.0
         return tensor
-
-    def __getitem__(self, idx):
-        sample = self.samples[idx]
-        renders = self._get_renders_metadata(sample)
-
-        lr_list, hr_hsv = self._process_frames(sample["path"], renders)
-
-        np.random.shuffle(lr_list)
-        input_stack = np.stack(lr_list)
-
-        # 3. Convert to Tensors and Normalize
-        input_tensor = torch.from_numpy(input_stack).permute(0, 3, 1, 2).float()
-        target_tensor = torch.from_numpy(hr_hsv).permute(2, 0, 1).float()
-
-        return self._normalize_hsv(input_tensor), self._normalize_hsv(target_tensor)
