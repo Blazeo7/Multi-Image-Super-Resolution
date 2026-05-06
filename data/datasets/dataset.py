@@ -141,20 +141,45 @@ class MISRDataset(Dataset):
 
     def _process_frames(self, base_dir, renders):
         """Loads and processes HR target and all LR input frames."""
-        lr_inputs = []
-        hr_target = None
+        lr_inputs = np.empty((len(renders), *self.lr_size[::-1], 4), dtype=np.uint8)
 
+        # Randomly select the new Reference
+        ref_idx = np.random.randint(0, len(renders))
+        ref_info = renders[ref_idx]
+
+        # Setup HR Target (The selected reference image)
+        ref_img = cv2.imread(os.path.join(base_dir, ref_info["filename"]))
+        if ref_img is None:
+            raise FileNotFoundError(f"Reference image not found: {ref_info['filename']}")
+        hr_target = cv2.cvtColor(ref_img, cv2.COLOR_BGR2HSV)
+
+        # Calculate H_ref_inv
+        H_ref = np.array(ref_info["homography_matrix"], dtype=np.float32)
+        try:
+            H_ref_inv = np.linalg.inv(H_ref)
+        except np.linalg.LinAlgError:
+            H_ref_inv = np.eye(3, dtype=np.float32)
+
+        # Process all images
         for i, info in enumerate(renders):
             img_path = os.path.join(base_dir, info["filename"])
             img = cv2.imread(img_path)
             if img is None:
                 raise FileNotFoundError(f"Failed to load: {img_path}")
 
-            H = np.array(info["homography_matrix"], dtype=np.float32)
-            lr_inputs.append(self._align_resize_hsv(img, H))
+            # H_i maps Image_i -> Deadon Space
+            H_i = np.array(info["homography_matrix"], dtype=np.float32)
 
-            if i == 0:  # The first render is always the anchor/target
-                hr_target = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            H_warp = H_ref_inv @ H_i
+
+            # Normalize homography
+            if H_warp[2, 2] != 0:
+                H_warp = H_warp / H_warp[2, 2]
+
+            lr_inputs[i] = self._align_resize_hsv(img, H_warp)
+
+        # Maintain reference at index 0 for augmentation logic
+        lr_inputs[0] = lr_inputs[ref_idx]
 
         return lr_inputs, hr_target
 
