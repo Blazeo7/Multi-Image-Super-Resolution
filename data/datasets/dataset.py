@@ -1,4 +1,5 @@
 import logging
+import random
 from typing import List, Optional, Tuple
 import albumentations as A
 
@@ -31,9 +32,9 @@ class MISRDataset(Dataset):
                 "split_method": "texture",
                 "samples": [
                     {
-                        "texture_id": "texture_01",
-                        "base_dir": "path/to/images_dir",
-                        "metadata_path": "metadata.json"
+                        "texture_id": "acg_grass_01",
+                        "path": "dataset/acg_grass_01",
+                        "scenes": ["metadata1.json", ...]
                     },
                     ...
                 ]
@@ -66,10 +67,16 @@ class MISRDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        sample = self.samples[idx]
-        renders = self._get_renders_metadata(sample)
+        # Get the texture group
+        texture_group = self.samples[idx]
+        base_dir = texture_group["path"]
 
-        lr_list, hr_hsv = self._process_frames(sample["base_dir"], renders)
+        # Randomly select ONE scene from this texture's list of scenes
+        scene_meta = random.choice(texture_group["scenes"])
+
+        renders = self._get_renders_metadata(scene_meta, base_dir)
+
+        lr_list, hr_hsv = self._process_frames(base_dir, renders)
 
         # Augment only non-reference images
         lr_list = [lr_list[0]] + self._apply_photometric_augmentations(lr_list[1:])
@@ -113,9 +120,9 @@ class MISRDataset(Dataset):
         }
         self.logger.info(f"Dataset Configured: {config}")
 
-    def _get_renders_metadata(self, sample):
+    def _get_renders_metadata(self, metadata: str, base_dir: str) -> List[dict]:
         """Loads metadata and handles padding/slicing of render list."""
-        meta_path = os.path.join(sample["base_dir"], sample["metadata_path"])
+        meta_path = os.path.join(base_dir, metadata)
         with open(meta_path, "r") as f:
             meta = json.load(f)
 
