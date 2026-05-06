@@ -1,5 +1,6 @@
 import logging
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
+import albumentations as A
 
 import cv2
 import numpy as np
@@ -16,6 +17,7 @@ class MISRDataset(Dataset):
         scale_factor: Optional[int] = None,
         hq_size: Tuple[int, int] = (1024, 1024),
         num_lr_images: Optional[int] = None,
+        augment: bool = False,
     ):
         """
         This class loads sample metadata from a JSON manifest. Key parameters
@@ -40,6 +42,17 @@ class MISRDataset(Dataset):
         self.logger = logging.getLogger("MISRDataset")
         self.manifest = self._load_manifest(manifest_path)
         self.samples = self.manifest.get("samples", [])
+        self.augment = augment
+        self.photo_transform = A.Compose(
+            [
+                A.RandomGamma(gamma_limit=(90, 110), p=0.5),  # 80-120 = ±20% gamma
+                A.RandomBrightnessContrast(brightness_limit=0.0, contrast_limit=0.1, p=0.3),
+                A.GaussNoise(std_range=(0.04, 0.20), p=0.3),
+                A.MultiplicativeNoise(multiplier=(0.95, 1.05), per_channel=True, p=0.2),
+                A.GaussianBlur(blur_limit=(3, 5), p=0.25),
+                A.ImageCompression(quality_range=(85, 95), p=0.3),
+            ]
+        )
 
         # Setup Hyperparameters
         self.hq_size = hq_size
@@ -83,6 +96,9 @@ class MISRDataset(Dataset):
         renders = self._get_renders_metadata(sample)
 
         lr_list, hr_hsv = self._process_frames(sample["base_dir"], renders)
+
+        # Augment only non-reference images
+        lr_list = [lr_list[0]] + self._apply_photometric_augmentations(lr_list[1:])
 
         np.random.shuffle(lr_list)
         input_stack = np.stack(lr_list)
@@ -147,3 +163,32 @@ class MISRDataset(Dataset):
         tensor[..., 0, :, :] /= 179.0
         tensor[..., 1:, :, :] /= 255.0
         return tensor
+
+    def _apply_photometric_augmentations(self, lr_list: List[np.ndarray]) -> List[np.ndarray]:
+        """
+        Applies photometric changes only to non-reference images (index 1+).
+        Ensures 'black' areas stay black using the 4th channel (mask).
+        """
+        if not self.augment or len(lr_list) <= 1:
+            return lr_list
+
+        final_lrs = [lr_list[0]]  # Reference image (index 0) stays clean
+
+        for i in range(1, len(lr_list)):
+            img = lr_list[i]
+            hsv = img[..., :3]
+            mask = img[..., 3]
+
+            # Apply augmentation to the HSV colors
+            augmented = self.photo_transform(image=hsv)["image"]
+
+            # Re-apply the mask to force background to absolute black
+            # We convert mask to 0.0-1.0 range for multiplication
+            normalized_mask = (mask > 128).astype(np.uint8)[..., np.newaxis]
+            clean_hsv = augmented * normalized_mask
+
+            # Reconstruct 4-channel image
+            combined = np.dstack([clean_hsv, mask])
+            final_lrs.append(combined)
+
+        return final_lrs
