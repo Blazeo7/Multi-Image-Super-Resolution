@@ -76,6 +76,7 @@ class TransformerEncoder(nn.Module):
         """
         Args:
             x: (B, S, embed_dim)
+            padding_mask: (B, S) where True indicates positions to be masked
 
         Returns:
             (B, S, embed_dim)
@@ -99,7 +100,6 @@ class TransformerMISR(nn.Module):
     def __init__(
         self,
         upscale_factor,
-        num_lr,
         hidden_dim,
         num_transformer_blocks,
         mha_heads,
@@ -109,7 +109,7 @@ class TransformerMISR(nn.Module):
         super().__init__()
 
         self.encoder = HighResNetEncoder(
-            num_res_blocks=2,
+            num_res_blocks=num_residual_blocks,
             in_channels=in_channels,
             out_channels=hidden_dim,
         )
@@ -117,17 +117,15 @@ class TransformerMISR(nn.Module):
             [TransformerEncoder(hidden_dim, mha_heads, ffn_hidden_dim=128) for _ in range(num_transformer_blocks)]
         )
         self.decoder = nn.Sequential(
-            nn.Conv2d(hidden_dim, in_channels * (upscale_factor**2), kernel_size=1, padding=1),
+            nn.Conv2d(hidden_dim, in_channels * (upscale_factor**2), kernel_size=1),
             nn.PReLU(),
             nn.PixelShuffle(upscale_factor),
         )
 
-        # (H*W, hidden_dim)
         self.x0 = nn.Parameter(torch.empty(1, 1, hidden_dim), requires_grad=True)
-        nn.init.normal_(self.x0)
+        nn.init.uniform_(self.x0)
 
         self.scale_factor = upscale_factor
-        self.num_lr = num_lr
         self.hidden_dim = hidden_dim
         self.num_residual_blocks = num_residual_blocks
         self.num_channels = in_channels
@@ -136,7 +134,7 @@ class TransformerMISR(nn.Module):
         """
         Args:
             x: (B, num_lr, C_in, H, W)
-            padding_mask: (B, num_lr)
+            padding_mask: (B, num_lr, H, W)
 
         Returns:
             (B, C_out, H*scale_factor, W*scale_factor)
@@ -154,10 +152,12 @@ class TransformerMISR(nn.Module):
         x0_expanded = self.x0.expand(L, -1, -1)  # (L, 1, hidden_dim)
         f = torch.cat([x0_expanded, f], dim=1)  # (L, num_lr + 1, hidden_dim)
 
-        # adjust padding mask to match the added x0 embedding
-        padding_mask = torch.cat([torch.zeros(B, 1), padding_mask], dim=1)
-        padding_mask = padding_mask.unsqueeze(1).unsqueeze(1).expand(-1, H, W, -1)
-        padding_mask = padding_mask.reshape(B * H * W, -1)
+        # adjust padding mask to match the added x0 embedding and reshape for transformer
+        padding_mask = torch.cat(
+            [torch.zeros((B, 1, H, W), dtype=padding_mask.dtype, device=padding_mask.device), padding_mask], dim=1
+        )  # (B, num_lr + 1, H, W)
+        padding_mask = padding_mask.permute(0, 2, 3, 1)  # (B, H, W, num_lr + 1)
+        padding_mask = padding_mask.reshape(B * H * W, num_lr + 1)  # (L, num_lr + 1)
 
         for t in self.transformers:
             f = t.forward(f, padding_mask=padding_mask)  # (L, num_lr + 1, hidden_dim)
@@ -168,5 +168,6 @@ class TransformerMISR(nn.Module):
 
         # sub-pixel convolution
         out = self.decoder(z.permute(0, 3, 1, 2))  # (B, C_out, H*scale_factor, W*scale_factor)
+        padding_mask = padding_mask.reshape(B, H, W, num_lr + 1).permute(0, 3, 1, 2)  # (B, num_lr, H, W)
 
-        return out
+        return out, padding_mask
