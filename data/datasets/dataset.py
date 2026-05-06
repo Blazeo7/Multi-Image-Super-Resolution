@@ -79,7 +79,7 @@ class MISRDataset(Dataset):
 
         # Split LR images and Mask
         lr_hsv = full_tensor[:, :3, :, :]
-        lr_masks = full_tensor[:, 3, :, :] / 255.0
+        lr_masks = full_tensor[:, 3, :, :] < 128
 
         return self._normalize_hsv(lr_hsv), self._normalize_hsv(target_tensor), lr_masks
 
