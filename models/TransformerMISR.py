@@ -95,7 +95,7 @@ class TransformerEncoder(nn.Module):
         return residual
 
 
-class TrasnformerMISR(nn.Module):
+class TransformerMISR(nn.Module):
     def __init__(
         self,
         upscale_factor,
