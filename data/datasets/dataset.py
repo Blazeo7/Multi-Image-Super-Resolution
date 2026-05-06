@@ -67,7 +67,7 @@ class MISRDataset(Dataset):
         renders = self._get_renders_metadata(scene_meta, texture_path)
         lr_list, hr_hsv = self._process_frames(texture_path, renders)
 
-        lr_list = [lr_list[0]] + self._apply_photometric_augmentations(lr_list[1:])
+        lr_list = self._apply_photometric_augmentations(lr_list)
 
         # Shuffle frame order
         np.random.shuffle(lr_list)
@@ -201,44 +201,27 @@ class MISRDataset(Dataset):
         """
         if not cfg:
             return None
-
-        transforms = []
-        for name, params in cfg.items():
-            # Get the class from albumentations by string name
-            transform_cls = getattr(A, name, None)
-            if transform_cls:
-                # Unpack params into the constructor
-                transforms.append(transform_cls(**params))
-            else:
-                self.logger.warning(f"Augmentation '{name}' not found in Albumentations.")
-
+        transforms = [getattr(A, n)(**p) for n, p in cfg.items() if hasattr(A, n)]
         return A.Compose(transforms) if transforms else None
 
     def _apply_photometric_augmentations(self, lr_list: List[np.ndarray]) -> List[np.ndarray]:
         """
-        Applies photometric changes only to non-reference images (index 1+).
-        Ensures 'black' areas stay black using the 4th channel (mask).
+        Applies photometric changes to all images in the list.
         """
-        if self.photo_transform is None or len(lr_list) <= 1:
+        if self.photo_transform is None:
             return lr_list
 
-        final_lrs = [lr_list[0]]  # Reference image (index 0) stays clean
-
-        for i in range(1, len(lr_list)):
-            img = lr_list[i]
+        final_lrs = []
+        for img in lr_list:
             hsv = img[..., :3]
             mask = img[..., 3]
 
-            # Apply augmentation to the HSV colors
             augmented = self.photo_transform(image=hsv)["image"]
 
-            # Re-apply the mask to force background to absolute black
-            # We convert mask to 0.0-1.0 range for multiplication
+            # Masking: Ensure warped background remains absolute black
             normalized_mask = (mask > 128).astype(np.uint8)[..., np.newaxis]
             clean_hsv = augmented * normalized_mask
 
-            # Reconstruct 4-channel image
-            combined = np.dstack([clean_hsv, mask])
-            final_lrs.append(combined)
+            final_lrs.append(np.dstack([clean_hsv, mask]))
 
         return final_lrs
