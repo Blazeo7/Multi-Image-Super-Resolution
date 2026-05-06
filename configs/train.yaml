@@ -19,7 +19,16 @@ defaults:
 train_dataset:
   _target_: data.datasets.dataset.MISRDataset
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/train_manifest.json
-  augment: true
+  augment_cfg:
+    RandomGamma:
+      gamma_limit: [ 95, 105 ]
+      p: 0.5
+    GaussNoise:
+      std_range: [ 0.01, 0.1 ]
+      p: 0.3
+    GaussianBlur:
+      blur_limit: [ 1, 3 ]
+      p: 0.25
 
 val_dataset:
   _target_: data.datasets.dataset.MISRDataset
