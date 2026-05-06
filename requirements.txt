@@ -13,4 +13,3 @@ tqdm
 PyYAML
 torchmetrics
 py
-pillow
