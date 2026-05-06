@@ -13,3 +13,4 @@ tqdm
 PyYAML
 torchmetrics
 py
+albumentations

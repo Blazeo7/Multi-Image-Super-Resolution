@@ -19,6 +19,7 @@ defaults:
 train_dataset:
   _target_: data.datasets.dataset.MISRDataset
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/train_manifest.json
+  augment: true
 
 val_dataset:
   _target_: data.datasets.dataset.MISRDataset
