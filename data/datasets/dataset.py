@@ -18,7 +18,7 @@ class MISRDataset(Dataset):
         scale_factor: Optional[int] = None,
         hq_size: Tuple[int, int] = (1024, 1024),
         num_lr_images: Optional[int] = None,
-        augment: bool = False,
+        augment_cfg: Optional[dict] = None,
     ):
         """
         This class loads sample metadata from a JSON manifest. Key parameters
@@ -43,17 +43,7 @@ class MISRDataset(Dataset):
         self.logger = logging.getLogger("MISRDataset")
         self.manifest = self._load_manifest(manifest_path)
         self.samples = self.manifest.get("samples", [])
-        self.augment = augment
-        self.photo_transform = A.Compose(
-            [
-                A.RandomGamma(gamma_limit=(90, 110), p=0.5),  # 80-120 = ±20% gamma
-                A.RandomBrightnessContrast(brightness_limit=0.0, contrast_limit=0.1, p=0.3),
-                A.GaussNoise(std_range=(0.04, 0.20), p=0.3),
-                A.MultiplicativeNoise(multiplier=(0.95, 1.05), per_channel=True, p=0.2),
-                A.GaussianBlur(blur_limit=(3, 5), p=0.25),
-                A.ImageCompression(quality_range=(85, 95), p=0.3),
-            ]
-        )
+        self.photo_transform = self._build_augmentations(augment_cfg)
 
         # Setup Hyperparameters
         self.hq_size = hq_size
@@ -205,12 +195,32 @@ class MISRDataset(Dataset):
         tensor[..., 1:, :, :] /= 255.0
         return tensor
 
+    def _build_augmentations(self, cfg: Optional[dict]) -> Optional[A.Compose]:
+        """
+        Dynamically builds an Albumentations pipeline from a dictionary.
+        Example cfg: {'RandomGamma': {'gamma_limit': [95, 105], 'p': 0.5}, ...}
+        """
+        if not cfg:
+            return None
+
+        transforms = []
+        for name, params in cfg.items():
+            # Get the class from albumentations by string name
+            transform_cls = getattr(A, name, None)
+            if transform_cls:
+                # Unpack params into the constructor
+                transforms.append(transform_cls(**params))
+            else:
+                self.logger.warning(f"Augmentation '{name}' not found in Albumentations.")
+
+        return A.Compose(transforms) if transforms else None
+
     def _apply_photometric_augmentations(self, lr_list: List[np.ndarray]) -> List[np.ndarray]:
         """
         Applies photometric changes only to non-reference images (index 1+).
         Ensures 'black' areas stay black using the 4th channel (mask).
         """
-        if not self.augment or len(lr_list) <= 1:
+        if self.photo_transform is None or len(lr_list) <= 1:
             return lr_list
 
         final_lrs = [lr_list[0]]  # Reference image (index 0) stays clean
