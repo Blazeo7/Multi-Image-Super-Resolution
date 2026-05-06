@@ -29,11 +29,10 @@ class MISRDataset(Dataset):
             {
                 "scale_factor": 2,
                 "num_aligned_images": 4,
-                "split_method": "texture",
+                "data_dir": "dataset/",
                 "samples": [
                     {
-                        "texture_id": "acg_grass_01",
-                        "path": "dataset/acg_grass_01",
+                        "texture_name": "acg_grass_01",
                         "scenes": ["metadata1.json", ...]
                     },
                     ...
@@ -42,6 +41,7 @@ class MISRDataset(Dataset):
         """
         self.logger = logging.getLogger("MISRDataset")
         self.manifest = self._load_manifest(manifest_path)
+        self.data_root = self.manifest.get("data_dir", "")
         self.samples = self.manifest.get("samples", [])
         self.photo_transform = self._build_augmentations(augment_cfg)
 
@@ -59,21 +59,21 @@ class MISRDataset(Dataset):
     def __getitem__(self, idx):
         # Get the texture group
         texture_group = self.samples[idx]
-        base_dir = texture_group["path"]
+        texture_path = os.path.join(self.data_root, texture_group["texture_name"])
 
         # Randomly select ONE scene from this texture's list of scenes
         scene_meta = random.choice(texture_group["scenes"])
 
-        renders = self._get_renders_metadata(scene_meta, base_dir)
+        renders = self._get_renders_metadata(scene_meta, texture_path)
+        lr_list, hr_hsv = self._process_frames(texture_path, renders)
 
-        lr_list, hr_hsv = self._process_frames(base_dir, renders)
-
-        # Augment only non-reference images
         lr_list = [lr_list[0]] + self._apply_photometric_augmentations(lr_list[1:])
 
+        # Shuffle frame order
         np.random.shuffle(lr_list)
         input_stack = np.stack(lr_list)
 
+        # Permute to [N, C, H, W]
         full_tensor = torch.from_numpy(input_stack).permute(0, 3, 1, 2).float()
         target_tensor = torch.from_numpy(hr_hsv).permute(2, 0, 1).float()
 
@@ -81,7 +81,6 @@ class MISRDataset(Dataset):
         lr_hsv = full_tensor[:, :3, :, :]
         lr_masks = full_tensor[:, 3:, :, :] / 255.0  # Normalize mask to [0, 1]
 
-        # Normalize and Return
         return self._normalize_hsv(lr_hsv), self._normalize_hsv(target_tensor), lr_masks
 
     def _load_manifest(self, path: str) -> dict:
@@ -106,7 +105,7 @@ class MISRDataset(Dataset):
             "dataset_scale_factor": self.scale_factor,
             "dataset_num_lr_images": self.num_lr_images,
             "dataset_hq_size": str(self.hq_size),
-            "dataset_lr_size": str(self.lr_size),
+            "data_root": self.data_root,
         }
         self.logger.info(f"Dataset Configured: {config}")
 

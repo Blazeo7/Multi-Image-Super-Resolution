@@ -2,19 +2,13 @@ import argparse
 import json
 import random
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, TypeAlias
+from typing import Dict, List, Tuple
 
 
-def get_texture_groups(input_dir: Path) -> Dict[str, Dict[str, Any]]:
+def get_texture_groups(input_dir: Path) -> Dict[str, List[str]]:
     """
-    Scans directory and groups metadata entries by texture_id.
-    Structure:
-    {
-        "texture_id": {
-            "path": "input_dir_name/texture_id",
-            "scenes": ["meta1.json", "meta2.json"]
-        }
-    }
+    Scans directory and groups metadata entries by texture folder name.
+    Returns: { "texture_name": ["meta1.json", "meta2.json"] }
     """
     groups = {}
 
@@ -26,11 +20,11 @@ def get_texture_groups(input_dir: Path) -> Dict[str, Dict[str, Any]]:
         if not tex_dir.is_dir():
             continue
 
-        texture_id = tex_dir.name
+        texture_name = tex_dir.name
         metadata_files = sorted([f.name for f in tex_dir.glob("*_metadata.json")])
 
         if metadata_files:
-            groups[texture_id] = {"path": f"{input_dir.name}/{texture_id}", "scenes": metadata_files}
+            groups[texture_name] = metadata_files
 
     return groups
 
@@ -75,24 +69,23 @@ def partition_keys(
 def save_manifest(
     output_path: Path,
     texture_keys: List[str],
-    all_groups: Dict,
+    all_groups: Dict[str, List[str]],
     args: argparse.Namespace,
     split_name: str,
 ):
-    """Saves the textures and their scenes to the manifest as a LIST of objects."""
+    """Saves the textures and their scenes to the manifest."""
 
     # Transform the dict into a list of objects
     samples_list = []
     for k in sorted(texture_keys):
-        item = all_groups[k]
-        item["texture_id"] = k  # Ensure the ID is inside the object
-        samples_list.append(item)
+        samples_list.append({"texture_name": k, "scenes": all_groups[k]})
 
     total_scenes = sum(len(v["scenes"]) for v in samples_list)
 
     content = {
         "scale_factor": args.scale,
         "num_aligned_images": args.n_supporting,
+        "data_dir": f"{Path(args.input_dir).name}/",
         "samples": samples_list,
     }
 
