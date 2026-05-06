@@ -153,8 +153,6 @@ class MISRDataset(Dataset):
 
     def _process_frames(self, base_dir, renders):
         """Loads and processes HR target and all LR input frames."""
-        lr_inputs = np.empty((len(renders), *self.lr_size[::-1], 4), dtype=np.uint8)
-
         # Randomly select the new Reference
         ref_idx = np.random.randint(0, len(renders))
         ref_info = renders[ref_idx]
@@ -165,35 +163,41 @@ class MISRDataset(Dataset):
             raise FileNotFoundError(f"Reference image not found: {ref_info['filename']}")
         hr_target = cv2.cvtColor(ref_img, cv2.COLOR_BGR2HSV)
 
-        # Calculate H_ref_inv
         H_ref = np.array(ref_info["homography_matrix"], dtype=np.float32)
         try:
             H_ref_inv = np.linalg.inv(H_ref)
         except np.linalg.LinAlgError:
-            H_ref_inv = np.eye(3, dtype=np.float32)
+            H_ref_inv = np.eye(3)
 
-        # Process all images
+        lr_list = []
+
+        # Reference image is always first in the list, unaugmented
+        ref_lr = self._align_resize_hsv(ref_img, np.eye(3, dtype=np.float32))
+        lr_list.append(ref_lr)
+
+        # Align other images to the reference
         for i, info in enumerate(renders):
-            img_path = os.path.join(base_dir, info["filename"])
-            img = cv2.imread(img_path)
+            if i == ref_idx:
+                continue
+
+            img = cv2.imread(os.path.join(base_dir, info["filename"]))
             if img is None:
-                raise FileNotFoundError(f"Failed to load: {img_path}")
+                continue
 
-            # H_i maps Image_i -> Deadon Space
             H_i = np.array(info["homography_matrix"], dtype=np.float32)
+            H_warp = self._compute_homography(H_ref_inv, H_i)
 
-            H_warp = H_ref_inv @ H_i
+            lr_list.append(self._align_resize_hsv(img, H_warp))
 
-            # Normalize homography
-            if H_warp[2, 2] != 0:
-                H_warp = H_warp / H_warp[2, 2]
+        return lr_list, hr_target
 
-            lr_inputs[i] = self._align_resize_hsv(img, H_warp)
+    def _compute_homography(self, H_ref_inv, H_i):
+        H_warp = H_ref_inv @ H_i
 
-        # Maintain reference at index 0 for augmentation logic
-        lr_inputs[0] = lr_inputs[ref_idx]
-
-        return lr_inputs, hr_target
+        # Normalize
+        if H_warp[2, 2] != 0:
+            H_warp /= H_warp[2, 2]
+        return H_warp
 
     def _normalize_hsv(self, tensor):
         """Normalizes HSV tensor: H/179, SV/255."""
