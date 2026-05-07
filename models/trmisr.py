@@ -113,8 +113,10 @@ class TransformerMISR(nn.Module):
         ffn_hidden_dim,
         num_residual_blocks,
         in_channels=3,
+        param_group_lrs=None,
     ):
         super().__init__()
+        self.param_group_lrs = param_group_lrs or {}
 
         self.encoder = HighResNetEncoder(
             num_res_blocks=num_residual_blocks,
@@ -135,6 +137,16 @@ class TransformerMISR(nn.Module):
 
         self.x0 = nn.Parameter(torch.empty(1, 1, embed_dim), requires_grad=True)
         nn.init.trunc_normal_(self.x0, std=0.02)
+
+    def parameter_groups(self):
+        if not self.param_group_lrs:
+            return list(self.parameters())
+        
+        groups = []
+        for name, lr in self.param_group_lrs.items():
+            print(f"Param group: {name} -> lr={lr}")
+            groups.append(dict(params=getattr(self, name).parameters(), lr=lr))
+        return groups
 
     def forward(self, x, padding_mask):
         """

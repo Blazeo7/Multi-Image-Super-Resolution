@@ -1,5 +1,5 @@
-exp_name: baseline
-run_name: unet_synth_ds
+exp_name: trmisr
+run_name: 5_lr
 
 hydra:
   job:
@@ -13,27 +13,48 @@ hydra:
 defaults:
   - trainer: default # loads key/value.yaml -> trainer/default.yaml
   - logger: mlflow
-  - model: unet
+  - model: trmisr
   - _self_ # options from this file
 
 train_dataset:
   _target_: data.datasets.dataset.MISRDataset
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/train_manifest.json
+  hq_size:
+    - 256
+    - 256
+  scale_factor: 4
+  num_lr_images: 5
+  samples_per_scene: 5
+  augment_cfg:
+    # RandomGamma:
+    #   gamma_limit: [ 95, 105 ]
+    #   p: 0.5
+    GaussNoise:
+      std_range: [ 0.01, 0.1 ]
+      p: 0.3
+    GaussianBlur:
+      blur_limit: [ 1, 3 ]
+      p: 0.25
 
 val_dataset:
   _target_: data.datasets.dataset.MISRDataset
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/dev_manifest.json
+  num_lr_images: 5
+  samples_per_scene: 5
+  hq_size:
+    - 256
+    - 256
+  scale_factor: 4
 
 dataloader:
   _target_: torch.utils.data.DataLoader
-  batch_size: 16
+  batch_size: 1 
   num_workers: 4
   shuffle: true
   pin_memory: true
 
 optimizer:
-  _target_: torch.optim.Adam
-  lr: 1e-3
+  _target_: torch.optim.AdamW
 
 loss:
   _target_: torch.nn.MSELoss
