@@ -85,7 +85,7 @@ def save_manifest(
     content = {
         "scale_factor": args.scale,
         "num_aligned_images": args.n_supporting,
-        "data_dir": f"{Path(args.input_dir).name}/",
+        "data_dir": f"{Path(args.input_dir).resolve().as_posix()}/",
         "samples": samples_list,
     }
 
