@@ -53,8 +53,8 @@ class Evaluator:
         # Progress Bar
         pbar = tqdm(self.loader, desc="Evaluating", unit="batch")
 
-        for i, (lr_stack, hr) in enumerate(pbar):
-            sr = self.inference.forward(lr_stack)
+        for i, (lr_stack, hr, masks) in enumerate(pbar):
+            sr = self.inference.forward(lr_stack, masks)
             self.metrics.update(sr, hr)
             self.visualizer.add_batch(lr_stack, sr, hr)
 

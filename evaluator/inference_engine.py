@@ -10,6 +10,6 @@ class InferenceEngine:
         self.model.eval()
 
     @torch.no_grad()
-    def forward(self, lr_stack: torch.Tensor) -> torch.Tensor:
-        sr = self.model(lr_stack)
+    def forward(self, lr_stack: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
+        sr = self.model(lr_stack, masks)
         return torch.clamp(sr, 0.0, 1.0)
