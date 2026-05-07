@@ -75,7 +75,6 @@ class MISRDataset(Dataset):
 
                     lr_candidates = [r for r in renders if r != hr]
                     lrs = random.sample(lr_candidates, min(self.num_lr_images - 1, len(lr_candidates)))
-                    lrs.append(hr)
 
                     hr["filename"] = os.path.join(data_root, texture_name, hr["filename"])
                     for lr in lrs:
