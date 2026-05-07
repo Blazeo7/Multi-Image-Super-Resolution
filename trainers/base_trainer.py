@@ -267,11 +267,17 @@ class Trainer:
 
             if self.accelerator.is_local_main_process:
                 self.logger.info(f"Training Loss '{key}' on epoch {self.state.epochs_trained}: {loss_mean}")
+
+                # log training loss
+                metrics = {f"Train_Epoch/{key}": loss_mean.item()}
+
+                # log learning rates
+                for i, pgroup in enumerate(self.optimizer.param_groups):
+                    name = pgroup.get("name", f"group_{i}")
+                    metrics[f"Train_Epoch/lr_{name}"] = pgroup["lr"]
+
                 self.logger.log_metrics(
-                    {
-                        f"Train_Epoch/{key}": loss_mean.item(),
-                        f"Train_Epoch/lr": self.optimizer.param_groups[0]["lr"],  # TODO: support multiple param groups
-                    },
+                    metrics,
                     step=self.state.epochs_trained,
                 )
 

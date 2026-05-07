@@ -1,8 +1,8 @@
 import hydra
 from accelerate import Accelerator
 from omegaconf import DictConfig
+from torchinfo import summary
 
-# NOTE: if there will be more trainers, consider using hydra instantiation for them as well
 from loggers.base_logger import BaseLogger
 from trainers import BasicTrainer as Trainer
 
@@ -24,7 +24,7 @@ def main(cfg: DictConfig) -> None:
     train_loader = hydra.utils.instantiate(cfg.dataloader, dataset=train_dataset)
     val_loader = hydra.utils.instantiate(cfg.dataloader, dataset=val_dataset)
 
-    optimizer = hydra.utils.instantiate(cfg.optimizer, params=model.parameters())
+    optimizer = hydra.utils.instantiate(cfg.optimizer, params=model.parameter_groups(), _convert_="all")
 
     loss_fn = hydra.utils.instantiate(cfg.loss)
 
@@ -39,6 +39,7 @@ def main(cfg: DictConfig) -> None:
         logger=logger,
     )
 
+    summary(model)
     trainer.train(train_loader, val_loader)
 
 
