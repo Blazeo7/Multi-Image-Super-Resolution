@@ -4,31 +4,27 @@ from .base_trainer import Trainer
 
 
 class BasicTrainer(Trainer):
-    """
-    TODO: rename to unet trainer
-    """
-
     def __init__(self, *args, **kwargs):
         super(BasicTrainer, self).__init__(*args, **kwargs)
 
     def training_step(self, batch, batch_idx):
-        inputs, targets = batch
+        inputs, targets, masks = batch
 
         self.optimizer.zero_grad()
-        preds = self.model.forward(inputs)
+        preds = self.model.forward(inputs, masks)
         loss = self.loss_fn(preds, targets)
         self.accelerator.backward(loss)
         self.optimizer.step()
 
-        return {"loss": loss.detach()}
+        return {"loss": loss.detach().item()}
 
     def validation_step(self, batch, batch_idx):
-        inputs, targets = batch
+        inputs, targets, masks = batch
 
-        preds = self.model.forward(inputs)
+        preds = self.model.forward(inputs, masks)
         loss = self.loss_fn(preds, targets)
 
-        return {"loss": loss}
+        return {"loss": loss.item()}
 
     def validation_epoch_end(self, outputs):
         losses = []
