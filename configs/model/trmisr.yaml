@@ -1,0 +1,13 @@
+_target_: models.trmisr.TransformerMISR
+upscale_factor: 4
+embed_dim: 64
+num_transformer_blocks: 6
+mha_heads: 8
+ffn_hidden_dim: 128
+num_residual_blocks: 2
+in_channels: 3
+
+param_group_lrs:
+  encoder: 1e-3
+  transformers: 5e-4
+  decoder: 1e-3
