@@ -3,6 +3,7 @@ import math
 import os
 import secrets
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 from omegaconf import DictConfig
@@ -26,15 +27,8 @@ class Visualizer:
         for i in range(sr.size(0)):
             self.all_samples.append((lr_stack[i].cpu(), sr[i].cpu(), hr[i].cpu()))
 
+
     def save(self, indices, metrics):
-        """
-        Save visualization grids for selected samples.
-
-        Args:
-            indices: Sample indices to visualize.
-            metrics: Per-sample dicts with PSNR, SSIM, LPIPS.
-        """
-
         log.info(f"Saving visualizations to {self.viz_dir}")
 
         for idx, sample_idx in enumerate(indices):
@@ -48,20 +42,15 @@ class Visualizer:
             lr_stack = lr_stack.reshape(-1, 3, lr_w, lr_h)
             n_lr_images = lr_stack.shape[0]
 
-            # Create a string of metrics for the title
             m = metrics[sample_idx]
             metric_str = f"PSNR: {m['psnr']:.2f} | SSIM: {m['ssim']:.3f} | LPIPS: {m['lpips']:.3f}"
 
-            # ── choose which LR frames to show ──────────────────────────────────
             n_show = n_lr_images if self.viz_cfg.lr_show is None else min(self.viz_cfg.lr_show, n_lr_images)
-
             indices_lr = self._get_image_indices(n_lr_images, n_show)
-            selected_images = [lr_stack[i] for i in indices_lr]
-
-            # ── grid dimensions: strict 4-column rows ───────────────────────────
+            
             lr_cols = self.viz_cfg.images_in_row
             lr_rows = math.ceil(n_show / lr_cols)
-            n_rows = lr_rows + 1  # extra row for SR/HR/error
+            n_rows = lr_rows + 1
 
             fig, axes = plt.subplots(
                 n_rows,
@@ -70,36 +59,42 @@ class Visualizer:
                 squeeze=False,
             )
 
-            # ── LR images ───────────────────────────────────────────────────────
-            for pos, images in enumerate(selected_images):
+            for pos in range(n_show):
+                idx_in_stack = indices_lr[pos]
                 row, col = divmod(pos, lr_cols)
                 ax = axes[row][col]
-                ax.imshow(self._to_numpy(images))
-                ax.set_title(f"LR frame {indices_lr[pos]}", fontsize=9)
+                
+                hsv_lr = self._to_numpy(lr_stack[idx_in_stack])
+                rgb_lr = mcolors.hsv_to_rgb(np.clip(hsv_lr, 0, 1))
+                
+                ax.imshow(rgb_lr)
+                ax.set_title(f"LR frame {idx_in_stack}", fontsize=9)
                 ax.axis("off")
 
-            # Clean up empty cells in LR rows
             for pos in range(n_show, lr_rows * lr_cols):
                 row, col = divmod(pos, lr_cols)
                 axes[row][col].set_visible(False)
 
-            # ── bottom row: SR | HR | error heatmap | blank ────────────────────
-            sr_np = self._to_numpy(sr)
-            hr_np = self._to_numpy(hr)
-            err = np.abs(sr_np - hr_np).mean(axis=-1)
+            sr_hsv = self._to_numpy(sr)
+            hr_hsv = self._to_numpy(hr)
+            
+            sr_rgb = mcolors.hsv_to_rgb(np.clip(sr_hsv, 0, 1))
+            hr_rgb = mcolors.hsv_to_rgb(np.clip(hr_hsv, 0, 1))
+            
+            err = np.abs(sr_rgb - hr_rgb).mean(axis=-1)
 
             bottom = axes[lr_rows]
 
-            bottom[0].imshow(sr_np)
-            bottom[0].set_title("SR Output", fontsize=9)
+            bottom[0].imshow(sr_rgb)
+            bottom[0].set_title("SR Output (RGB)", fontsize=9)
             bottom[0].axis("off")
 
-            bottom[1].imshow(hr_np)
-            bottom[1].set_title("HR Ground Truth", fontsize=9)
+            bottom[1].imshow(hr_rgb)
+            bottom[1].set_title("HR Ground Truth (RGB)", fontsize=9)
             bottom[1].axis("off")
 
             im = bottom[2].imshow(err, cmap="hot", vmin=0.0, vmax=max(err.max(), 1e-6))
-            bottom[2].set_title("Error Map", fontsize=9)
+            bottom[2].set_title("Error Map (RGB Space)", fontsize=9)
             bottom[2].axis("off")
             plt.colorbar(im, ax=bottom[2], fraction=0.046, pad=0.04)
 
@@ -109,9 +104,9 @@ class Visualizer:
             plt.tight_layout()
 
             filename = f"{self.viz_cfg.order_by_metric}" if self.viz_cfg.type == "metric" else f"{self.viz_cfg.type}"
-
             img_name = f"{filename}_{idx +1}_{secrets.token_hex(2)}.png"
             out_path = os.path.join(self.viz_dir, img_name)
+            
             self.logger.log_figure(fig, img_name)
             plt.savefig(out_path, bbox_inches="tight", dpi=150)
             plt.close(fig)
