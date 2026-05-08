@@ -168,6 +168,10 @@ class Trainer:
                     loss_dict = self.training_step(batch, batch_idx)
                     training_epoch_output.append(loss_dict)
 
+                    if self.accelerator.sync_gradients:
+                        self.optimizer.step()
+                        self.optimizer.zero_grad()
+
                     if self.cfg.step_on_batch and self.accelerator.sync_gradients:
                         self.lr_scheduler.step()
 
@@ -184,7 +188,7 @@ class Trainer:
 
                 if score is not None:
                     if not self.cfg.step_on_batch:
-                        self.lr_scheduler.step()
+                        self.lr_scheduler.step(score)
 
                     should_stop = self._early_stop_check(score)
                     if should_stop:
