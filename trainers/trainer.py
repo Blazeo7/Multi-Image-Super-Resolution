@@ -43,7 +43,8 @@ class BasicTrainer(Trainer):
         else:
             loss_dict = {"loss": loss_res}
 
-        return {k: v.detach() if torch.is_tensor(v) else v for k, v in loss_dict.items()}
+        return {k: v.detach() if torch.is_tensor(v) else torch.tensor(v) for k, v in loss_dict.items()}
+
 
     def validation_epoch_end(self, outputs):
         if not outputs:
@@ -56,7 +57,7 @@ class BasicTrainer(Trainer):
         for key in keys:
             values = [o[key] for o in outputs if key in o]
             if values:
-                avg_val = torch.mean(torch.as_tensor(values, dtype=torch.float32))
+                avg_val = torch.stack(values).float().mean()
                 metrics[f"Val_Epoch/{key}"] = avg_val
 
         # report lr

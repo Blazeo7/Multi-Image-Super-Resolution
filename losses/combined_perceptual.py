@@ -35,8 +35,8 @@ class HuberSobelSSIMLoss(nn.Module):
         total_loss = self.w_huber * loss_huber + self.w_sobel * loss_sobel + self.w_ssim * loss_ssim
 
         return total_loss, {
-            "loss": total_loss.detach().mean(),
-            "huber": loss_huber.detach().mean(),
-            "sobel": loss_sobel.detach().mean(),
-            "ssim": loss_ssim.detach().mean(),
+            "loss": total_loss.detach(),
+            "huber": loss_huber.detach(),
+            "sobel": loss_sobel.detach(),
+            "ssim": loss_ssim.detach(),
         }
