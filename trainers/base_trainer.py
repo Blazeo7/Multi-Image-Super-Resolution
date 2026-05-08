@@ -296,8 +296,7 @@ class Trainer:
             ckpt_path = os.path.join(ckpts_dir, "best")
 
             # also log to logger if available
-            unwrapped_model = self.accelerator.unwrap_model(self.model)
-            self.logger.log_model(unwrapped_model, "best_model")
+            self.logger.log_model(self.model, "best_model")
         else:
             ckpt_path = os.path.join(ckpts_dir, str(epoch))
 
