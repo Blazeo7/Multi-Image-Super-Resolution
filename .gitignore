@@ -187,3 +187,5 @@ mlflow.db
 /mlruns
 /data/raw
 /data/manifests
+*.err
+*.out

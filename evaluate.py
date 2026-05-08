@@ -1,12 +1,17 @@
+import random
 from pathlib import Path
 
 import accelerate
 import hydra
+import numpy as np
 import torch
 from omegaconf import DictConfig
 from safetensors.torch import load_file
 
 from evaluator import Evaluator
+
+np.random.seed(42)
+random.seed(42)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="evaluate")
