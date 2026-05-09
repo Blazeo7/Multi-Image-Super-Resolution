@@ -24,6 +24,7 @@ class Trainer:
         loss_fn: Module,
         cfg: TrainerConfig,
         logger: BaseLogger,
+        custom_lrs=None,
     ):
         self.accelerator = accelerator
         self.cfg = cfg
@@ -40,6 +41,7 @@ class Trainer:
         # State Management
         self.state = TrainerState(maximize_score=self.cfg.save_max_score)
         self.accelerator.register_for_checkpointing(self.state)
+        self.custom_lrs = custom_lrs
 
         # Training Control Variables
         self.lr_scheduler = None
@@ -308,4 +310,13 @@ class Trainer:
         self.accelerator.save_state(ckpt_path)
 
     def _load_checkpoint(self, ckpt_path):
+        print(f"Loading checkpoint from {ckpt_path}...")
         self.accelerator.load_state(ckpt_path)
+
+        if self.custom_lrs:
+            # set custom learning rate after loading in case of finetuning
+            for param_group in self.optimizer.param_groups:
+                name = param_group.get("name", "default")
+                if name in self.custom_lrs:
+                    print(f"Setting LR for {name} -> {self.custom_lrs[name]}")
+                    param_group["lr"] = self.custom_lrs[name]
