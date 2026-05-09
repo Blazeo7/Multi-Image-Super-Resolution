@@ -3,6 +3,22 @@ import torch
 from .base_trainer import Trainer
 
 
+def get_gradient_norms(model, losses):
+    norms = {}
+    for name, loss_val in losses.items():
+        model.zero_grad()
+        loss_val.backward(retain_graph=True)
+
+        total_norm = 0
+        for p in model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        norms[name] = total_norm**0.5
+
+    return norms
+
+
 class BasicTrainer(Trainer):
     def __init__(self, *args, **kwargs):
         super(BasicTrainer, self).__init__(*args, **kwargs)
@@ -44,7 +60,6 @@ class BasicTrainer(Trainer):
             loss_dict = {"loss": loss_res}
 
         return {k: v.detach() if torch.is_tensor(v) else torch.tensor(v) for k, v in loss_dict.items()}
-
 
     def validation_epoch_end(self, outputs):
         if not outputs:
