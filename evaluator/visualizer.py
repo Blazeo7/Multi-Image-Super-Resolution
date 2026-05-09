@@ -27,9 +27,11 @@ class Visualizer:
         for i in range(sr.size(0)):
             self.all_samples.append((lr_stack[i].cpu(), sr[i].cpu(), hr[i].cpu()))
 
-
     def save(self, indices, metrics):
         log.info(f"Saving visualizations to {self.viz_dir}")
+
+        # Determine the primary metric to show first
+        primary_metric = self.viz_cfg.get("order_by_metric", "psnr").lower()
 
         for idx, sample_idx in enumerate(indices):
             if sample_idx >= len(self.all_samples):
@@ -42,12 +44,13 @@ class Visualizer:
             lr_stack = lr_stack.reshape(-1, 3, lr_w, lr_h)
             n_lr_images = lr_stack.shape[0]
 
-            m = metrics[sample_idx]
-            metric_str = f"PSNR: {m['psnr']:.2f} | SSIM: {m['ssim']:.3f} | LPIPS: {m['lpips']:.3f}"
+            metric_str = self.get_metrics_stats(metrics, primary_metric, sample_idx)
 
-            n_show = n_lr_images if self.viz_cfg.lr_show is None else min(self.viz_cfg.lr_show, n_lr_images)
+            n_show = (
+                n_lr_images if self.viz_cfg.lr_show is None else min(self.viz_cfg.lr_show, n_lr_images)
+            )
             indices_lr = self._get_image_indices(n_lr_images, n_show)
-            
+
             lr_cols = self.viz_cfg.images_in_row
             lr_rows = math.ceil(n_show / lr_cols)
             n_rows = lr_rows + 1
@@ -63,10 +66,10 @@ class Visualizer:
                 idx_in_stack = indices_lr[pos]
                 row, col = divmod(pos, lr_cols)
                 ax = axes[row][col]
-                
+
                 hsv_lr = self._to_numpy(lr_stack[idx_in_stack])
                 rgb_lr = mcolors.hsv_to_rgb(np.clip(hsv_lr, 0, 1))
-                
+
                 ax.imshow(rgb_lr)
                 ax.set_title(f"LR frame {idx_in_stack}", fontsize=9)
                 ax.axis("off")
@@ -77,10 +80,10 @@ class Visualizer:
 
             sr_hsv = self._to_numpy(sr)
             hr_hsv = self._to_numpy(hr)
-            
+
             sr_rgb = mcolors.hsv_to_rgb(np.clip(sr_hsv, 0, 1))
             hr_rgb = mcolors.hsv_to_rgb(np.clip(hr_hsv, 0, 1))
-            
+
             err = np.abs(sr_rgb - hr_rgb).mean(axis=-1)
 
             bottom = axes[lr_rows]
@@ -103,13 +106,43 @@ class Visualizer:
             fig.suptitle(f"{self.viz_cfg.type.upper()} | Index: {sample_idx}\n{metric_str}", fontsize=12)
             plt.tight_layout()
 
-            filename = f"{self.viz_cfg.order_by_metric}" if self.viz_cfg.type == "metric" else f"{self.viz_cfg.type}"
+            filename = (
+                f"{self.viz_cfg.order_by_metric}"
+                if self.viz_cfg.type == "metric"
+                else f"{self.viz_cfg.type}"
+            )
             img_name = f"{filename}_{idx +1}_{secrets.token_hex(2)}.png"
             out_path = os.path.join(self.viz_dir, img_name)
-            
+
             self.logger.log_figure(fig, img_name)
             plt.savefig(out_path, bbox_inches="tight", dpi=150)
             plt.close(fig)
+
+    def get_metrics_stats(self, metrics, primary_metric, sample_idx):
+        m = metrics[sample_idx]
+
+        # Create a dictionary of available metrics formatted as strings
+        available_metrics = {
+            "psnr": f"PSNR: {m['psnr']:.2f}" if "psnr" in m else None,
+            "cpsnr": f"cPSNR: {m['cpsnr']:.2f}" if "cpsnr" in m else None,
+            "ssim": f"SSIM: {m['ssim']:.3f}" if "ssim" in m else None,
+            "cssim": f"cSSIM: {m['cssim']:.3f}" if "cssim" in m else None,
+            "lpips": f"LPIPS: {m['lpips']:.3f}" if "lpips" in m else None,
+        }
+
+        # Start the list with the primary metric if it exists
+        ordered_parts = []
+        if available_metrics.get(primary_metric):
+            primary_metric_stats = available_metrics.pop(primary_metric)
+            ordered_parts.append(convert_to_bold(primary_metric_stats))
+
+        # Append all other remaining metrics
+        for val in available_metrics.values():
+            if val is not None:
+                ordered_parts.append(val)
+
+        metric_str = " | ".join(ordered_parts)
+        return metric_str
 
     def _get_image_indices(self, n_frames, n_show):
         if self.viz_cfg.lr_select == "random":
@@ -128,3 +161,13 @@ class Visualizer:
     def _error_map(self, sr_np, hr_np):
         """Absolute error collapsed to a single-channel heatmap."""
         return np.abs(sr_np - hr_np).mean(axis=-1)
+
+
+def convert_to_bold(text: str) -> str:
+    """
+    Convert text to bold using LaTeX math mode formatting.
+    """
+    # Replace spaces with escaped spaces for LaTeX
+    escaped_text = text.replace(" ", r"\ ")
+    # Wrap in LaTeX bold command
+    return rf"$\mathbf{{{escaped_text}}}$"
