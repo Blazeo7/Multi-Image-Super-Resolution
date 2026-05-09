@@ -100,8 +100,8 @@ class MISRDataset(Dataset):
         num_lr_images: int = 4,
         color_mode: Union[ColorMode, str] = ColorMode.HSV,
         augment_cfg: Optional[dict] = None,
-        geo_augment_cfg: Optional[dict] = None,
         samples_per_scene: int = 5,
+        alignment_corruption_coeff: float = 0.0,
     ):
         self.scale_factor = scale_factor
         self.num_lr_images = num_lr_images
@@ -124,9 +124,8 @@ class MISRDataset(Dataset):
         texture_groups = self.manifest.get("samples", [])
         self.samples = self._build_sample_list(texture_groups, self.data_root, samples_per_scene)
         self.photo_transform = self._build_augmentations(augment_cfg)
-        self.geo_transform = self._build_geometric_augmentations(geo_augment_cfg)
-
         self._log_configuration()
+        self.h_corr_coeff = alignment_corruption_coeff
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -135,7 +134,6 @@ class MISRDataset(Dataset):
         hr_meta, lrs_meta = self.samples[idx]
         lr_list, lr_masks, hr_img = self._process_frames(hr_meta, lrs_meta)
         lr_list = self._apply_photometric_augmentations(lr_list, lr_masks)
-        lr_list, lr_masks = self._apply_geometric_augmentations(lr_list, lr_masks)
 
         # shuffle_idx = np.random.permutation(len(lr_list))
         # lr_list = [lr_list[i] for i in shuffle_idx]
@@ -225,6 +223,21 @@ class MISRDataset(Dataset):
         _, lr_mask = cv2.threshold(lr_mask, 128, 255, cv2.THRESH_BINARY)
         return self._to_space(lr_img), lr_mask
 
+    def corrupt_homography(self, H: np.ndarray, noise_scale: float, image_size) -> np.ndarray:
+        H = H.copy()
+        w, h = image_size
+        cx, cy = w / 2, h / 2
+        tx = np.random.normal(0, noise_scale)
+        ty = np.random.normal(0, noise_scale)
+        T_to = np.array([[1, 0, -cx], [0, 1, -cy], [0, 0, 1]], dtype=np.float32)
+        T_fr = np.array([[1, 0, cx], [0, 1, cy], [0, 0, 1]], dtype=np.float32)
+        P = np.array([[1, 0, tx], [0, 1, ty], [0, 0, 1]], dtype=np.float32)
+        Delta = T_fr @ P @ T_to
+        H_noisy = Delta @ H
+        if H_noisy[2, 2] != 0:
+            H_noisy = H_noisy / H_noisy[2, 2]
+        return H_noisy
+
     def _process_frames(self, hr: dict, lrs: List[dict]) -> Tuple[List[np.ndarray], List[np.ndarray], np.ndarray]:
         ref_bgr = cv2.imread(hr["filename"])
         if ref_bgr is None:
@@ -245,22 +258,13 @@ class MISRDataset(Dataset):
                 continue
             H_i = np.array(lr["homography_matrix"], dtype=np.float32)
             H_warp = _compute_relative_homography(H_ref_inv, H_i)
+
+            H_warp = self.corrupt_homography(H_warp, self.h_corr_coeff, img_bgr.shape[1::-1])
+
             img_space, mask = self._align_resize_to_space(img_bgr, H_warp)
             lr_list.append(img_space)
             mask_list.append(mask)
         return lr_list, mask_list, hr_img
-
-    def _build_geometric_augmentations(self, geo_cfg: Optional[dict]):
-        if not geo_cfg:
-            return None
-
-        geo_transforms = []
-        for name, params in geo_cfg.items():
-            if hasattr(A, name):
-                params["border_mode"] = cv2.BORDER_REPLICATE
-                geo_transforms.append(getattr(A, name)(**params))
-
-        return A.Compose(geo_transforms)
 
     def _build_augmentations(self, cfg: Optional[dict]) -> Optional[A.Compose]:
         if not cfg:
@@ -288,21 +292,6 @@ class MISRDataset(Dataset):
             valid_mask = (mask > 128).astype(np.uint8)[..., np.newaxis]
             final_lrs.append(aug_img * valid_mask)
         return final_lrs
-
-    def _apply_geometric_augmentations(self, lr_list, lr_masks):
-        if self.geo_transform is None:
-            return lr_list, lr_masks
-
-        final_lrs = []
-        final_masks = []
-
-        for img, mask in zip(lr_list, lr_masks):
-            res = self.geo_transform(image=img, mask=mask)
-
-            final_lrs.append(res["image"])
-            final_masks.append(res["mask"])
-
-        return final_lrs, final_masks
 
 
 def _compute_relative_homography(H_ref_inv: np.ndarray, H_i: np.ndarray) -> np.ndarray:
