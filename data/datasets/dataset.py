@@ -100,6 +100,7 @@ class MISRDataset(Dataset):
         num_lr_images: int = 4,
         color_mode: Union[ColorMode, str] = ColorMode.HSV,
         augment_cfg: Optional[dict] = None,
+        geo_augment_cfg: Optional[dict] = None,
         samples_per_scene: int = 5,
     ):
         self.scale_factor = scale_factor
@@ -123,6 +124,8 @@ class MISRDataset(Dataset):
         texture_groups = self.manifest.get("samples", [])
         self.samples = self._build_sample_list(texture_groups, self.data_root, samples_per_scene)
         self.photo_transform = self._build_augmentations(augment_cfg)
+        self.geo_transform = self._build_geometric_augmentations(geo_augment_cfg)
+
         self._log_configuration()
 
     def __len__(self) -> int:
@@ -132,6 +135,7 @@ class MISRDataset(Dataset):
         hr_meta, lrs_meta = self.samples[idx]
         lr_list, lr_masks, hr_img = self._process_frames(hr_meta, lrs_meta)
         lr_list = self._apply_photometric_augmentations(lr_list, lr_masks)
+        lr_list, lr_masks = self._apply_geometric_augmentations(lr_list, lr_masks)
 
         # shuffle_idx = np.random.permutation(len(lr_list))
         # lr_list = [lr_list[i] for i in shuffle_idx]
@@ -246,6 +250,18 @@ class MISRDataset(Dataset):
             mask_list.append(mask)
         return lr_list, mask_list, hr_img
 
+    def _build_geometric_augmentations(self, geo_cfg: Optional[dict]):
+        if not geo_cfg:
+            return None
+
+        geo_transforms = []
+        for name, params in geo_cfg.items():
+            if hasattr(A, name):
+                params["border_mode"] = cv2.BORDER_REPLICATE
+                geo_transforms.append(getattr(A, name)(**params))
+
+        return A.Compose(geo_transforms)
+
     def _build_augmentations(self, cfg: Optional[dict]) -> Optional[A.Compose]:
         if not cfg:
             return None
@@ -272,6 +288,21 @@ class MISRDataset(Dataset):
             valid_mask = (mask > 128).astype(np.uint8)[..., np.newaxis]
             final_lrs.append(aug_img * valid_mask)
         return final_lrs
+
+    def _apply_geometric_augmentations(self, lr_list, lr_masks):
+        if self.geo_transform is None:
+            return lr_list, lr_masks
+
+        final_lrs = []
+        final_masks = []
+
+        for img, mask in zip(lr_list, lr_masks):
+            res = self.geo_transform(image=img, mask=mask)
+
+            final_lrs.append(res["image"])
+            final_masks.append(res["mask"])
+
+        return final_lrs, final_masks
 
 
 def _compute_relative_homography(H_ref_inv: np.ndarray, H_i: np.ndarray) -> np.ndarray:
