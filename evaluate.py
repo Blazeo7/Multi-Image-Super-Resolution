@@ -29,9 +29,10 @@ def main(cfg: DictConfig) -> None:
 
     model, dataset, dataloader = accelerator.prepare(model, dataset, dataloader)
 
-    weights_path = Path(cfg.checkpoint_path) / "model.safetensors"
-    state_dict = load_file(weights_path, device=str(accelerator.device))
-    model.load_state_dict(state_dict)
+    if cfg.load_ckpt:
+        weights_path = Path(cfg.checkpoint_path) / "model.safetensors"
+        state_dict = load_file(weights_path, device=str(accelerator.device))
+        model.load_state_dict(state_dict)
 
     evaluator = Evaluator(
         model,
