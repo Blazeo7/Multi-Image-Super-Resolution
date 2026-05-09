@@ -102,6 +102,7 @@ class MISRDataset(Dataset):
         augment_cfg: Optional[dict] = None,
         samples_per_scene: int = 5,
         alignment_corruption_coeff: float = 0.0,
+        alignment_corruption_p: float = 0.0,
     ):
         self.scale_factor = scale_factor
         self.num_lr_images = num_lr_images
@@ -121,11 +122,13 @@ class MISRDataset(Dataset):
         self.logger = logging.getLogger("MISRDataset")
         self.manifest = self._load_manifest(manifest_path)
         self.data_root = self.manifest.get("data_dir", "")
+        self.meta_root = self.manifest.get("meta_dir", self.data_root)
         texture_groups = self.manifest.get("samples", [])
         self.samples = self._build_sample_list(texture_groups, self.data_root, samples_per_scene)
         self.photo_transform = self._build_augmentations(augment_cfg)
         self._log_configuration()
         self.h_corr_coeff = alignment_corruption_coeff
+        self.h_corr_p = alignment_corruption_p
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -186,7 +189,11 @@ class MISRDataset(Dataset):
         for group in texture_groups:
             texture_name = group["texture_name"]
             for scene_meta in group["scenes"]:
-                renders = self._get_renders_metadata(scene_meta, os.path.join(data_root, texture_name))
+                renders = self._get_renders_metadata(scene_meta, os.path.join(self.meta_root, texture_name))
+
+                # filter out renders without homography matrices
+                renders = [r for r in renders if r.get("homography_matrix", None) is not None]
+
                 hr_candidates = renders.copy()
                 for _ in range(samples_per_scene):
                     if not hr_candidates:
@@ -224,6 +231,9 @@ class MISRDataset(Dataset):
         return self._to_space(lr_img), lr_mask
 
     def corrupt_homography(self, H: np.ndarray, noise_scale: float, image_size) -> np.ndarray:
+        if np.random.random() > self.h_corr_p:
+            return H
+
         H = H.copy()
         w, h = image_size
         cx, cy = w / 2, h / 2
