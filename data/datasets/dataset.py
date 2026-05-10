@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 
 class ColorMode(str, Enum):
@@ -90,6 +91,16 @@ def _normalize_hsv(tensor: torch.Tensor) -> torch.Tensor:
     tensor[..., 1:, :, :] = tensor[..., 1:, :, :] / 255.0
     return tensor
 
+def estimate_sharpness(img_path: str) -> float:
+    img = cv2.imread(img_path)
+    if img is None:
+        return 0.0
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    img_var = gray.var()
+    if img_var < 1e-6:
+        return 0.0
+    return float(cv2.Laplacian(gray, cv2.CV_32F).var() / img_var)
+
 
 class MISRDataset(Dataset):
     def __init__(
@@ -103,6 +114,8 @@ class MISRDataset(Dataset):
         samples_per_scene: int = 5,
         alignment_corruption_coeff: float = 0.0,
         alignment_corruption_p: float = 0.0,
+        exclusive_hr=False,
+        random_hr=True,
     ):
         self.scale_factor = scale_factor
         self.num_lr_images = num_lr_images
@@ -119,6 +132,8 @@ class MISRDataset(Dataset):
             self._normalize,
         ) = _make_color_pipeline(self.color_mode)
 
+        self.exclusive_hr = exclusive_hr
+        self.random_hr = random_hr
         self.logger = logging.getLogger("MISRDataset")
         self.manifest = self._load_manifest(manifest_path)
         self.data_root = self.manifest.get("data_dir", "")
@@ -136,7 +151,13 @@ class MISRDataset(Dataset):
     def __getitem__(self, idx: int):
         hr_meta, lrs_meta = self.samples[idx]
         lr_list, lr_masks, hr_img = self._process_frames(hr_meta, lrs_meta)
+
+        while len(lr_list) < self.num_lr_images:
+            lr_list.append(np.zeros_like(lr_list[0]))
+            lr_masks.append(np.ones_like(lr_masks[0]))
+
         lr_list = self._apply_photometric_augmentations(lr_list, lr_masks)
+
 
         # shuffle_idx = np.random.permutation(len(lr_list))
         # lr_list = [lr_list[i] for i in shuffle_idx]
@@ -186,25 +207,53 @@ class MISRDataset(Dataset):
         samples_per_scene: int,
     ) -> List[tuple]:
         samples = []
-        for group in texture_groups:
+
+        for group in tqdm(texture_groups, desc="Building scenes..."):
             texture_name = group["texture_name"]
+
             for scene_meta in group["scenes"]:
-                renders = self._get_renders_metadata(scene_meta, os.path.join(self.meta_root, texture_name))
+                base_dir = os.path.join(self.meta_root, texture_name)
+                renders  = self._get_renders_metadata(scene_meta, base_dir)
 
-                # filter out renders without homography matrices
-                renders = [r for r in renders if r.get("homography_matrix", None) is not None]
+                renders = [r for r in renders if r.get("passed", True)]
+                if not renders:
+                    continue
 
-                hr_candidates = renders.copy()
-                for _ in range(samples_per_scene):
+                if self.exclusive_hr:
+                    hr_candidates = [r for r in renders if r.get("type") == "HQ"]
+                    n_samples = len(hr_candidates)
+                else:
+                    hr_candidates = renders.copy()
+
+                    if not self.random_hr:
+                        hr_candidates.sort(
+                            key=lambda r: r.get("quality", {}).get("ncc_after_flow", 0.0),
+                        )
+                    n_samples = samples_per_scene
+
+                if not hr_candidates:
+                    self.logger.warning(f"Scene {scene_meta}: no HR candidates, skipping.")
+                    continue
+
+                for _ in range(n_samples):
                     if not hr_candidates:
-                        hr_candidates = renders.copy()
-                    hr = random.choice(hr_candidates)
+                        break
+
+                    hr = hr_candidates[0] if not self.random_hr else random.choice(hr_candidates)
                     hr_candidates.remove(hr)
+
                     lr_candidates = [r for r in renders if r != hr]
-                    lrs = random.sample(lr_candidates, min(self.num_lr_images - 1, len(lr_candidates)))
-                    hr = {**hr, "filename": os.path.join(data_root, texture_name, hr["filename"])}
-                    lrs = [{**lr, "filename": os.path.join(data_root, texture_name, lr["filename"])} for lr in lrs]
+                    lrs = random.sample(
+                        lr_candidates,
+                        min(self.num_lr_images - 1, len(lr_candidates)),
+                    )
+
+                    hr  = {**hr,  "filename": os.path.join(data_root, texture_name, hr["filename"])}
+                    lrs = [{**lr, "filename": os.path.join(data_root, texture_name, lr["filename"])}
+                           for lr in lrs]
+
                     samples.append((hr, lrs))
+
         random.shuffle(samples)
         return samples
 
