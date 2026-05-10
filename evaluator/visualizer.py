@@ -33,6 +33,9 @@ class Visualizer:
     def save(self, indices, metrics):
         log.info(f"Saving visualizations to {self.viz_dir}")
 
+        # Determine the primary metric to show first
+        primary_metric = self.viz_cfg.get("order_by_metric", "psnr").lower()
+
         for idx, sample_idx in enumerate(indices):
             if sample_idx >= len(self.all_samples):
                 continue
@@ -40,6 +43,7 @@ class Visualizer:
             lr_stack, sr, hr = self.all_samples[sample_idx]
 
             n_lr_images = lr_stack.shape[0]
+
             n_show = n_lr_images if self.viz_cfg.lr_show is None else min(self.viz_cfg.lr_show, n_lr_images)
             lr_indices = self._get_lr_indices(n_lr_images, n_show)
 
