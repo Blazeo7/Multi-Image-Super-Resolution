@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 
+from .utils import init_icnr
+
 
 class HighResNetEncoder(nn.Module):
     def __init__(
@@ -38,13 +40,12 @@ class HighResNetEncoder(nn.Module):
 
         mask = padding_mask.unsqueeze(2).expand_as(x)  # (B, num_lr, C, H, W)
         x_for_median = x.masked_fill(mask, float("nan"))
-        x_clean = x.masked_fill(mask, 0.0)
 
         lr_ref, _ = torch.nanmedian(x_for_median, dim=1, keepdim=True)  # (B, 1, C_in, H, W)
         lr_ref = lr_ref.nan_to_num(0.0)  # replace NaNs with zeros for masked positions
         lr_ref = lr_ref.expand(-1, K, -1, -1, -1)  # (B, num_lr, C_in, H, W)
 
-        lr = torch.cat([x_clean, lr_ref], dim=2)  # (B, num_lr, 2*C_in, H, W)
+        lr = torch.cat([x, lr_ref], dim=2)  # (B, num_lr, 2*C_in, H, W)
 
         # collapse dimensions for proper convolution
         lr = lr.view(B * K, 2 * C, H, W)
@@ -106,13 +107,15 @@ class TransformerEncoder(nn.Module):
 class TransformerMISR(nn.Module):
     def __init__(
         self,
-        upscale_factor,
-        embed_dim,
-        num_transformer_blocks,
-        mha_heads,
-        ffn_hidden_dim,
-        num_residual_blocks,
-        in_channels=3,
+        upscale_factor: int,
+        embed_dim: int,
+        num_transformer_blocks: int,
+        mha_heads: int,
+        ffn_hidden_dim: int,
+        num_residual_blocks: int,
+        in_channels: int = 3,
+        decoder_kernel_size: int = 1,
+        decoder_padding: int = 0,
         param_group_lrs=None,
     ):
         super().__init__()
@@ -130,22 +133,48 @@ class TransformerMISR(nn.Module):
             ]
         )
         self.decoder = nn.Sequential(
-            nn.Conv2d(embed_dim, in_channels * (upscale_factor**2), kernel_size=1),
+            nn.Conv2d(
+                embed_dim, in_channels * (upscale_factor**2), kernel_size=decoder_kernel_size, padding=decoder_padding
+            ),
             nn.PReLU(),
             nn.PixelShuffle(upscale_factor),
         )
 
+        init_icnr(self.decoder[0].weight, upscale_factor=upscale_factor)
+
         self.x0 = nn.Parameter(torch.empty(1, 1, embed_dim), requires_grad=True)
         nn.init.trunc_normal_(self.x0, std=0.02)
+
+        self.embed_dim = embed_dim
+        self.in_channels = in_channels
+        self.upscale_factor = upscale_factor
 
     def parameter_groups(self):
         if not self.param_group_lrs:
             return list(self.parameters())
-        
+
+        grouped_param_ids = set()
         groups = []
+
         for name, lr in self.param_group_lrs.items():
+            attr = getattr(self, name)
+            # handle both nn.Module and nn.Parameter
+            if isinstance(attr, nn.Module):
+                params = list(attr.parameters())
+            elif isinstance(attr, nn.Parameter):
+                params = [attr]
+            else:
+                raise ValueError(f"'{name}' is neither nn.Module nor nn.Parameter")
+
             print(f"Param group: {name} -> lr={lr}")
-            groups.append(dict(params=getattr(self, name).parameters(), lr=lr))
+            grouped_param_ids.update(id(p) for p in params)
+            groups.append(dict(params=params, lr=lr, name=name))
+
+        leftover = [p for p in self.parameters() if id(p) not in grouped_param_ids]
+        if leftover:
+            print(f"Param group: default -> base lr")
+            groups.append(dict(params=leftover, name="default"))
+
         return groups
 
     def forward(self, x, padding_mask):
@@ -187,3 +216,31 @@ class TransformerMISR(nn.Module):
         out = self.decoder(z.permute(0, 3, 1, 2))  # (B, C_out, H*scale_factor, W*scale_factor)
 
         return out
+
+
+class TransformerMISR_DoubleConvDecoder(TransformerMISR):
+    def __init__(
+        self,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+
+        e_dim = self.embed_dim
+        in_ch = self.in_channels
+        up_factor = self.upscale_factor
+
+        # 1. Spatial Processing: Depthwise conv
+        spatial_conv = nn.Conv2d(e_dim, e_dim, kernel_size=3, padding=1, groups=e_dim)
+
+        # 2. Channel Projection: 1x1 conv
+        projection_conv = nn.Conv2d(e_dim, in_ch * (up_factor**2), kernel_size=1)
+
+        self.decoder = nn.Sequential(
+            spatial_conv,
+            nn.PReLU(),
+            projection_conv,
+            nn.PixelShuffle(up_factor),
+        )
+
+        init_icnr(self.decoder[2].weight, upscale_factor=up_factor)

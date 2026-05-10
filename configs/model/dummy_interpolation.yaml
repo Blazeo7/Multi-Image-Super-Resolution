@@ -1,0 +1,4 @@
+_target_: models.dummy_interpolation.DummyInterpolationAverage
+interpolation_type: 'bicubic'
+take_n_input_samples: 1
+upscale_factor: 4

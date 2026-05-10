@@ -17,16 +17,12 @@ class TrainerConfig:
     chkpt_interval: int = 1
     ckpt_dir: str = "checkpoints"
     resume_from: Optional[str] = None
+    custom_lrs: Optional[dict] = None
 
     # lr scheduler
-    scheduler: Dict[str, Any] = field(
-        default_factory=lambda: {
-            "_target_": "torch.optim.lr_scheduler.StepLR",
-            "step_size": 10,
-            "gamma": 0.1,
-        }
-    )
+    scheduler = None
     step_on_batch: bool = True
+    step_on_epoch: bool = False
 
 
 class TrainerState:

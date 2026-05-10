@@ -3,11 +3,11 @@ import math
 import os
 import secrets
 
-import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 from omegaconf import DictConfig
 
+from data.datasets.dataset import ColorMode, _make_color_pipeline
 from loggers.base_logger import BaseLogger
 
 log = logging.getLogger(__name__)
@@ -16,10 +16,13 @@ log = logging.getLogger(__name__)
 class Visualizer:
     def __init__(self, save_dir: str, cfg: DictConfig, logger: BaseLogger):
         self.cfg = cfg
-        self.viz_cfg = self.cfg.visualization
+        self.viz_cfg = cfg.visualization
         self.logger = logger
+        self.color_mode = ColorMode(self.viz_cfg.color_mode)
 
-        self.viz_dir = os.path.join(save_dir, self.cfg.paths.vizulization_dir)
+        _, self._to_rgb, _, _ = _make_color_pipeline(self.color_mode)
+
+        self.viz_dir = os.path.join(save_dir, cfg.paths.vizulization_dir)
         os.makedirs(self.viz_dir, exist_ok=True)
         self.all_samples = []
 
@@ -39,135 +42,78 @@ class Visualizer:
 
             lr_stack, sr, hr = self.all_samples[sample_idx]
 
-            lr_h = lr_stack.shape[-1]
-            lr_w = lr_stack.shape[-2]
-            lr_stack = lr_stack.reshape(-1, 3, lr_w, lr_h)
             n_lr_images = lr_stack.shape[0]
 
-            metric_str = self.get_metrics_stats(metrics, primary_metric, sample_idx)
-
-            n_show = (
-                n_lr_images if self.viz_cfg.lr_show is None else min(self.viz_cfg.lr_show, n_lr_images)
-            )
-            indices_lr = self._get_image_indices(n_lr_images, n_show)
+            n_show = n_lr_images if self.viz_cfg.lr_show is None else min(self.viz_cfg.lr_show, n_lr_images)
+            lr_indices = self._get_lr_indices(n_lr_images, n_show)
 
             lr_cols = self.viz_cfg.images_in_row
             lr_rows = math.ceil(n_show / lr_cols)
-            n_rows = lr_rows + 1
 
             fig, axes = plt.subplots(
-                n_rows,
+                lr_rows + 1,
                 lr_cols,
-                figsize=(lr_cols * 4, n_rows * 4),
+                figsize=(lr_cols * 4, (lr_rows + 1) * 4),
                 squeeze=False,
             )
 
-            for pos in range(n_show):
-                idx_in_stack = indices_lr[pos]
+            for pos, stack_idx in enumerate(lr_indices):
                 row, col = divmod(pos, lr_cols)
-                ax = axes[row][col]
-
-                hsv_lr = self._to_numpy(lr_stack[idx_in_stack])
-                rgb_lr = mcolors.hsv_to_rgb(np.clip(hsv_lr, 0, 1))
-
-                ax.imshow(rgb_lr)
-                ax.set_title(f"LR frame {idx_in_stack}", fontsize=9)
-                ax.axis("off")
+                axes[row][col].imshow(self._tensor_to_rgb(lr_stack[stack_idx]))
+                axes[row][col].set_title(f"LR frame {stack_idx}", fontsize=9)
+                axes[row][col].axis("off")
 
             for pos in range(n_show, lr_rows * lr_cols):
                 row, col = divmod(pos, lr_cols)
                 axes[row][col].set_visible(False)
 
-            sr_hsv = self._to_numpy(sr)
-            hr_hsv = self._to_numpy(hr)
-
-            sr_rgb = mcolors.hsv_to_rgb(np.clip(sr_hsv, 0, 1))
-            hr_rgb = mcolors.hsv_to_rgb(np.clip(hr_hsv, 0, 1))
-
+            sr_rgb = self._tensor_to_rgb(sr)
+            hr_rgb = self._tensor_to_rgb(hr)
             err = np.abs(sr_rgb - hr_rgb).mean(axis=-1)
 
             bottom = axes[lr_rows]
 
             bottom[0].imshow(sr_rgb)
-            bottom[0].set_title("SR Output (RGB)", fontsize=9)
+            bottom[0].set_title("SR Output", fontsize=9)
             bottom[0].axis("off")
 
             bottom[1].imshow(hr_rgb)
-            bottom[1].set_title("HR Ground Truth (RGB)", fontsize=9)
+            bottom[1].set_title("HR Ground Truth", fontsize=9)
             bottom[1].axis("off")
 
             im = bottom[2].imshow(err, cmap="hot", vmin=0.0, vmax=max(err.max(), 1e-6))
-            bottom[2].set_title("Error Map (RGB Space)", fontsize=9)
+            bottom[2].set_title("Error Map", fontsize=9)
             bottom[2].axis("off")
             plt.colorbar(im, ax=bottom[2], fraction=0.046, pad=0.04)
 
             bottom[3].set_visible(False)
 
-            fig.suptitle(f"{self.viz_cfg.type.upper()} | Index: {sample_idx}\n{metric_str}", fontsize=12)
+            m = metrics[sample_idx]
+            metric_str = f"PSNR: {m['psnr']:.2f} | SSIM: {m['ssim']:.3f} | LPIPS: {m['lpips']:.3f}"
+            fig.suptitle(
+                f"{self.viz_cfg.type.upper()} [{self.color_mode.value}] | Index: {sample_idx}\n{metric_str}",
+                fontsize=12,
+            )
             plt.tight_layout()
 
-            filename = (
-                f"{self.viz_cfg.order_by_metric}"
-                if self.viz_cfg.type == "metric"
-                else f"{self.viz_cfg.type}"
-            )
-            img_name = f"{filename}_{idx +1}_{secrets.token_hex(2)}.png"
-            out_path = os.path.join(self.viz_dir, img_name)
+            filename = self.viz_cfg.order_by_metric if self.viz_cfg.type == "metric" else self.viz_cfg.type
+            out_path = os.path.join(self.viz_dir, f"{filename}_{idx + 1}_{secrets.token_hex(2)}.png")
 
-            self.logger.log_figure(fig, img_name)
+            self.logger.log_figure(fig, os.path.basename(out_path))
             plt.savefig(out_path, bbox_inches="tight", dpi=150)
             plt.close(fig)
 
-    def get_metrics_stats(self, metrics, primary_metric, sample_idx):
-        m = metrics[sample_idx]
-
-        # Create a dictionary of available metrics formatted as strings
-        available_metrics = {
-            "psnr": f"PSNR: {m['psnr']:.2f}" if "psnr" in m else None,
-            "cpsnr": f"cPSNR: {m['cpsnr']:.2f}" if "cpsnr" in m else None,
-            "ssim": f"SSIM: {m['ssim']:.3f}" if "ssim" in m else None,
-            "cssim": f"cSSIM: {m['cssim']:.3f}" if "cssim" in m else None,
-            "lpips": f"LPIPS: {m['lpips']:.3f}" if "lpips" in m else None,
-        }
-
-        # Start the list with the primary metric if it exists
-        ordered_parts = []
-        if available_metrics.get(primary_metric):
-            primary_metric_stats = available_metrics.pop(primary_metric)
-            ordered_parts.append(convert_to_bold(primary_metric_stats))
-
-        # Append all other remaining metrics
-        for val in available_metrics.values():
-            if val is not None:
-                ordered_parts.append(val)
-
-        metric_str = " | ".join(ordered_parts)
-        return metric_str
-
-    def _get_image_indices(self, n_frames, n_show):
+    def _get_lr_indices(self, n_frames: int, n_show: int):
         if self.viz_cfg.lr_select == "random":
             rng = np.random.default_rng(seed=self.cfg.random_seed)
-            indices_lr = sorted(rng.choice(n_frames, size=n_show, replace=False))
-        elif self.viz_cfg.lr_select == "first":
-            indices_lr = list(range(n_show))
-        else:
-            raise ValueError(f"Unknown LR selection method: {self.viz_cfg.lr_select}")
-        return indices_lr
+            return sorted(rng.choice(n_frames, size=n_show, replace=False).tolist())
+        if self.viz_cfg.lr_select == "first":
+            return list(range(n_show))
+        raise ValueError(f"Unknown LR selection method: {self.viz_cfg.lr_select}")
 
-    def _to_numpy(self, tensor):
-        """CHW tensor → HWC numpy, clamped to [0, 1]."""
-        return tensor.permute(1, 2, 0).numpy().clip(0.0, 1.0)
-
-    def _error_map(self, sr_np, hr_np):
-        """Absolute error collapsed to a single-channel heatmap."""
-        return np.abs(sr_np - hr_np).mean(axis=-1)
-
-
-def convert_to_bold(text: str) -> str:
-    """
-    Convert text to bold using LaTeX math mode formatting.
-    """
-    # Replace spaces with escaped spaces for LaTeX
-    escaped_text = text.replace(" ", r"\ ")
-    # Wrap in LaTeX bold command
-    return rf"$\mathbf{{{escaped_text}}}$"
+    def _tensor_to_rgb(self, tensor) -> np.ndarray:
+        hwc = tensor.permute(1, 2, 0).numpy().clip(0.0, 1.0)
+        # Tensors are normalized floats; scale back to uint8 range for cv2 conversions
+        uint8 = (hwc * 255).astype(np.uint8)
+        rgb = self._to_rgb(uint8)
+        return rgb.astype(np.float32) / 255.0

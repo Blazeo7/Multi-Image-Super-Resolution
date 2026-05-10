@@ -51,6 +51,9 @@ class Trainer:
         self.model.eval()
 
     def _instantiate_lr_scheduler(self, total_steps):
+        if self.lr_scheduler is None:
+            return None
+
         scheduler_cfg = self.cfg.scheduler
 
         # Resolve the actual class/target from the config
@@ -65,7 +68,7 @@ class Trainer:
         if "total_steps" in signature.parameters:
             kwargs["total_steps"] = total_steps
 
-        return hydra.utils.instantiate(scheduler_cfg, **kwargs)
+        return hydra.utils.instantiate(scheduler_cfg, **kwargs, _convert_="partial")
 
     def _check_improvement(self, score, best_score):
         if self.cfg.save_max_score:
@@ -168,7 +171,11 @@ class Trainer:
                     loss_dict = self.training_step(batch, batch_idx)
                     training_epoch_output.append(loss_dict)
 
-                    if self.cfg.step_on_batch and self.accelerator.sync_gradients:
+                    if self.accelerator.sync_gradients:
+                        self.optimizer.step()
+                        self.optimizer.zero_grad()
+
+                    if self.cfg.step_on_batch and self.accelerator.sync_gradients and self.lr_scheduler:
                         self.lr_scheduler.step()
 
                 self.state.steps_trained += 1
@@ -183,8 +190,8 @@ class Trainer:
                 score = self.validate(val_loader)
 
                 if score is not None:
-                    if not self.cfg.step_on_batch:
-                        self.lr_scheduler.step()
+                    if self.cfg.step_on_epoch and self.lr_scheduler:
+                        self.lr_scheduler.step(score)
 
                     should_stop = self._early_stop_check(score)
                     if should_stop:
@@ -296,8 +303,7 @@ class Trainer:
             ckpt_path = os.path.join(ckpts_dir, "best")
 
             # also log to logger if available
-            unwrapped_model = self.accelerator.unwrap_model(self.model)
-            self.logger.log_model(unwrapped_model, "best_model")
+            self.logger.log_model(self.model, "best_model")
         else:
             ckpt_path = os.path.join(ckpts_dir, str(epoch))
 
@@ -305,4 +311,16 @@ class Trainer:
         self.accelerator.save_state(ckpt_path)
 
     def _load_checkpoint(self, ckpt_path):
+        print(f"Loading checkpoint from {ckpt_path}...")
         self.accelerator.load_state(ckpt_path)
+
+        if self.cfg.custom_lrs:
+            # set custom learning rate after loading in case of finetuning
+            for param_group in self.optimizer.param_groups:
+                name = param_group.get("name", "default")
+                if name in self.cfg.custom_lrs:
+                    print(f"Setting LR for {name} -> {self.cfg.custom_lrs[name]}")
+                    param_group["lr"] = self.cfg.custom_lrs[name]
+
+            # NOTE: assuming setting custom lrs means finetuning, should change later
+            self.state = TrainerState(maximize_score=self.cfg.save_max_score)

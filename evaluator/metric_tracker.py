@@ -98,8 +98,16 @@ class MetricTracker:
         metric_fn = self.metrics_instances[name]
 
         if name == "lpips":
-            # LPIPS expects range [-1, 1]
-            return metric_fn(sr * 2 - 1, hr * 2 - 1).item()
+            # 1. Scale from [0, 1] to [-1, 1]
+            sr_lpips = sr * 2 - 1
+            hr_lpips = hr * 2 - 1
+
+            # 2. Convert Grayscale [B, 1, H, W] to Pseudo-RGB [B, 3, H, W]
+            if sr_lpips.shape[1] == 1:
+                sr_lpips = sr_lpips.repeat(1, 3, 1, 1)
+                hr_lpips = hr_lpips.repeat(1, 3, 1, 1)
+
+            return metric_fn(sr_lpips, hr_lpips).item()
 
         # Default behavior for PSNR, SSIM, etc.
         return metric_fn(sr, hr).item()
@@ -159,9 +167,7 @@ class MetricTracker:
         available_metrics = list(self.results_history[0].keys())
 
         if metric_key not in available_metrics:
-            raise ValueError(
-                f"Warning: Metric '{metric_key}' not found in history. Available: {available_metrics}"
-            )
+            raise ValueError(f"Warning: Metric '{metric_key}' not found in history. Available: {available_metrics}")
 
         # Extract scores with their original indices
         indexed_scores = enumerate([x[metric_key] for x in self.results_history])

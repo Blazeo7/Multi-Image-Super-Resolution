@@ -1,12 +1,17 @@
+import random
 from pathlib import Path
 
 import accelerate
 import hydra
+import numpy as np
 import torch
 from omegaconf import DictConfig
 from safetensors.torch import load_file
 
 from evaluator import Evaluator
+
+np.random.seed(42)
+random.seed(42)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="evaluate")
@@ -24,9 +29,10 @@ def main(cfg: DictConfig) -> None:
 
     model, dataset, dataloader = accelerator.prepare(model, dataset, dataloader)
 
-    weights_path = Path(cfg.checkpoint_path) / "model.safetensors"
-    state_dict = load_file(weights_path, device=str(accelerator.device))
-    model.load_state_dict(state_dict)
+    if cfg.load_ckpt:
+        weights_path = Path(cfg.checkpoint_path) / "model.safetensors"
+        state_dict = load_file(weights_path, device=str(accelerator.device))
+        model.load_state_dict(state_dict)
 
     evaluator = Evaluator(
         model,

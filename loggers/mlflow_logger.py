@@ -21,9 +21,10 @@ class MLflowLogger(BaseLogger):
         self.run_id = resume_run_id
 
     def start(self):
-        run = mlflow.start_run(run_name=self.run_name, run_id=self.run_id)
-        self.run_id = run.info.run_id
-        return self.run_id
+        if self.accelerator is None or self.accelerator.is_main_process:
+            run = mlflow.start_run(run_name=self.run_name, run_id=self.run_id)
+            self.run_id = run.info.run_id
+            return self.run_id
 
     def _log_hyperparameters(self, params: dict):
         mlflow.log_params(params)
@@ -45,7 +46,13 @@ class MLflowLogger(BaseLogger):
         mlflow.log_figure(figure, name)
 
     def _log_model(self, model, name: str):
-        mlflow_pytorch.log_model(model, name)
+        if self.accelerator:
+            unwrapped = self.accelerator.unwrap_model(model)
+        else:
+            unwrapped = model
+
+        state_dict = unwrapped.state_dict()
+        mlflow_pytorch.log_state_dict(state_dict, artifact_path=name)
 
     def finish(self):
         if mlflow.active_run():
