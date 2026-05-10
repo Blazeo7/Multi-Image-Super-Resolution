@@ -24,7 +24,6 @@ class Trainer:
         loss_fn: Module,
         cfg: TrainerConfig,
         logger: BaseLogger,
-        custom_lrs=None,
     ):
         self.accelerator = accelerator
         self.cfg = cfg
@@ -41,7 +40,6 @@ class Trainer:
         # State Management
         self.state = TrainerState(maximize_score=self.cfg.save_max_score)
         self.accelerator.register_for_checkpointing(self.state)
-        self.custom_lrs = custom_lrs
 
         # Training Control Variables
         self.lr_scheduler = None
@@ -53,6 +51,9 @@ class Trainer:
         self.model.eval()
 
     def _instantiate_lr_scheduler(self, total_steps):
+        if self.lr_scheduler is None:
+            return None
+
         scheduler_cfg = self.cfg.scheduler
 
         # Resolve the actual class/target from the config
@@ -67,7 +68,7 @@ class Trainer:
         if "total_steps" in signature.parameters:
             kwargs["total_steps"] = total_steps
 
-        return hydra.utils.instantiate(scheduler_cfg, **kwargs)
+        return hydra.utils.instantiate(scheduler_cfg, **kwargs, _convert_="partial")
 
     def _check_improvement(self, score, best_score):
         if self.cfg.save_max_score:
@@ -174,7 +175,7 @@ class Trainer:
                         self.optimizer.step()
                         self.optimizer.zero_grad()
 
-                    if self.cfg.step_on_batch and self.accelerator.sync_gradients:
+                    if self.cfg.step_on_batch and self.accelerator.sync_gradients and self.lr_scheduler:
                         self.lr_scheduler.step()
 
                 self.state.steps_trained += 1
@@ -189,7 +190,7 @@ class Trainer:
                 score = self.validate(val_loader)
 
                 if score is not None:
-                    if not self.cfg.step_on_batch:
+                    if self.cfg.step_on_epoch and self.lr_scheduler:
                         self.lr_scheduler.step(score)
 
                     should_stop = self._early_stop_check(score)
@@ -313,10 +314,13 @@ class Trainer:
         print(f"Loading checkpoint from {ckpt_path}...")
         self.accelerator.load_state(ckpt_path)
 
-        if self.custom_lrs:
+        if self.cfg.custom_lrs:
             # set custom learning rate after loading in case of finetuning
             for param_group in self.optimizer.param_groups:
                 name = param_group.get("name", "default")
-                if name in self.custom_lrs:
-                    print(f"Setting LR for {name} -> {self.custom_lrs[name]}")
-                    param_group["lr"] = self.custom_lrs[name]
+                if name in self.cfg.custom_lrs:
+                    print(f"Setting LR for {name} -> {self.cfg.custom_lrs[name]}")
+                    param_group["lr"] = self.cfg.custom_lrs[name]
+
+            # NOTE: assuming setting custom lrs means finetuning, should change later
+            self.state = TrainerState(maximize_score=self.cfg.save_max_score)
