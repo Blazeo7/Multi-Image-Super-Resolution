@@ -1,0 +1,40 @@
+exp_name: ycbcr
+run_name: validate
+eval_metric_prefix: real
+
+hydra:
+  job:
+    chdir: True
+  run:
+    dir: outputs/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: multirun/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+load_ckpt: False
+
+defaults:
+  - evaluator: default
+  - model: dummy_interpolation
+  - logger: mlflow
+  - _self_
+
+dataset:
+  _target_: data.datasets.dataset.MISRDataset
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/test_manifest.json
+  color_mode: ycbcr
+  num_lr_images: 8 
+  samples_per_scene: 1
+  hq_size:
+    - 256
+    - 256
+  scale_factor: 4
+
+dataloader:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 16
+  num_workers: 0
+  pin_memory: true
+
+checkpoint_path: "/pub/users/xnguye28/knn-sr/outputs/trmisr_ycbcr_2026-05-09_01-42-14/checkpoints/best"
+

@@ -1,0 +1,111 @@
+exp_name: trmisr_ycbcr
+run_name: finetune_real_ds
+
+hydra:
+  job:
+    chdir: True
+  run:
+    dir: outputs/${run_name}_${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: multirun/${run_name}_${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+defaults:
+  - trainer: default # loads key/value.yaml -> trainer/default.yaml
+  - logger: mlflow
+  - model: trmisr
+  - _self_ # options from this file
+
+debug: false
+num_debug_samples: 50
+
+trainer:
+  resume_from: "/pub/users/xnguye28/knn-sr/outputs/finetune_real_ds_2026-05-10_12-22-44/checkpoints/20"
+  step_on_batch: true
+  step_on_epoch: true
+  gradient_accumulation_steps: 1
+  custom_lrs: null
+  scheduler:
+    _target_: trainers.warmup_plateau_scheduler.WarmupPlateauWrapper
+    _args_:
+      - warmup_steps: 2000
+      - base_lrs: { encoder: 1e-5, transformers: 5e-4, decoder: 1e-4, default: 1e-4}
+      - plateau_config: {mode: min, factor: 0.90, patience: 3, threshold_mode: rel, cooldown: 2, min_lr: 1e-8}
+
+
+model:
+  _target_: models.trmisr.TransformerMISR_DoubleConvDecoder
+  in_channels: 3
+
+train_dataset_main:
+  _target_: data.datasets.dataset.MISRDataset
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/hradis/train_manifest.json
+  color_mode: ycbcr
+  hq_size:
+    - 256
+    - 256
+  scale_factor: 4
+  num_lr_images: 10
+  alignment_corruption_coeff: 0
+  alignment_corruption_p: 0
+  samples_per_scene: 5
+  exclusive_hr: false
+  random_hr: false
+
+train_dataset_secondary:
+  _target_: data.datasets.dataset.MISRDataset
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/train_manifest.json
+  color_mode: ycbcr
+  hq_size:
+    - 256
+    - 256
+  scale_factor: 4
+  num_lr_images: 10
+  alignment_corruption_coeff: 0
+  alignment_corruption_p: 0
+  samples_per_scene: 5
+  augment_cfg:
+    GaussNoise:
+      std_range: [ 0.01, 0.1 ]
+      p: 0.3
+    GaussianBlur:
+      blur_limit: [ 1, 3 ]
+      p: 0.25
+  exclusive_hr: false
+  random_hr: true
+
+val_dataset:
+  _target_: data.datasets.dataset.MISRDataset
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/hradis/dev_manifest.json
+  color_mode: ycbcr
+  num_lr_images: 10
+  samples_per_scene: 1
+  exclusive_hr: true
+  alignment_corruption_coeff: 0
+  alignment_corruption_p: 0
+  hq_size:
+    - 256
+    - 256
+  scale_factor: 4
+
+dataloader:
+  _target_: torch.utils.data.DataLoader
+  num_workers: 4
+  pin_memory: true
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1e-4
+
+loss:
+  _target_: losses.combined_perceptual.HuberSobelSSIMLoss
+  w_huber: 3.5
+  w_sobel: 0.6
+  w_ssim: 0.1
+  huber_delta: 0.1
+  grayscale: False
+
+sampler:
+  _target_: data.datasets.multisource_sampler.MultiSourceBatchSampler
+  batch_size: 18
+  n_secondary: 6

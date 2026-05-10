@@ -1,0 +1,47 @@
+exp_name: ycbcr
+run_name: validate_colors_ft_real_ds
+eval_metric_prefix: real
+
+hydra:
+  job:
+    chdir: True
+  run:
+    dir: outputs/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: multirun/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+load_ckpt: True
+
+defaults:
+  - evaluator: default
+  - model: trmisr
+  - logger: mlflow
+  - _self_
+
+model:
+  _target_: models.trmisr.TransformerMISR_DoubleConvDecoder
+  in_channels: 3
+
+dataset:
+  _target_: data.datasets.dataset.MISRDataset
+  manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/hradis/test_manifest.json
+  color_mode: ycbcr
+  num_lr_images: 10 
+  samples_per_scene: 1
+  hq_size:
+    - 256
+    - 256
+  scale_factor: 4
+  alignment_corruption_coeff: 0
+  alignment_corruption_p: 0
+  exclusive_hr: true
+
+dataloader:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 16
+  num_workers: 0
+  pin_memory: true
+
+checkpoint_path: "/pub/users/xnguye28/knn-sr/outputs/finetune_real_ds_alternative_2026-05-10_15-01-42/checkpoints/best"
+

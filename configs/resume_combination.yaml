@@ -1,5 +1,5 @@
 exp_name: trmisr_ycbcr
-run_name: combination_resume
+run_name: finetune_colors_doubleconv
 
 hydra:
   job:
@@ -19,6 +19,13 @@ defaults:
 debug: false
 num_debug_samples: 10
 
+trainer:
+  resume_from: "/pub/users/xnguye28/knn-sr/outputs/trmisr_ycbcr_comb_loss/checkpoints/best"
+
+model:
+  _target_: models.trmisr.TransformerMISR_DoubleConvDecoder
+  in_channels: 3
+
 train_dataset:
   _target_: data.datasets.dataset.MISRDataset
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/train_manifest.json
@@ -28,7 +35,8 @@ train_dataset:
     - 256
   scale_factor: 4
   num_lr_images: 10
-  alignment_corruption_coeff: 1.5  # 1.5 5.0 10.0
+  alignment_corruption_coeff: 0
+  alignment_corruption_p: 0
   samples_per_scene: 10
   augment_cfg:
     # RandomGamma:
@@ -46,8 +54,9 @@ val_dataset:
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/dev_manifest.json
   color_mode: ycbcr
   num_lr_images: 8 
-  samples_per_scene: 5
-  alignment_corruption_coeff: 1.5
+  samples_per_scene: 10
+  alignment_corruption_coeff: 0
+  alignment_corruption_p: 0
   hq_size:
     - 256
     - 256
@@ -55,7 +64,7 @@ val_dataset:
 
 dataloader:
   _target_: torch.utils.data.DataLoader
-  batch_size: 24
+  batch_size: 20
   num_workers: 4
   shuffle: true
   pin_memory: true
@@ -66,7 +75,7 @@ optimizer:
 
 loss:
   _target_: losses.combined_perceptual.HuberSobelSSIMLoss
-  w_huber: 1.0
+  w_huber: 3.5
   w_sobel: 0.6
   w_ssim: 0.1
   huber_delta: 0.1

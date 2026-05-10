@@ -1,13 +1,13 @@
 exp_name: trmisr_ycbcr
-run_name: combination_resume
+run_name: 8_lr_decoder_doubleconv
 
 hydra:
   job:
     chdir: True
   run:
-    dir: outputs/${run_name}_${now:%Y-%m-%d_%H-%M-%S}
+    dir: outputs/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
   sweep:
-    dir: multirun/${run_name}_${now:%Y-%m-%d_%H-%M-%S}
+    dir: multirun/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
     subdir: ${hydra.job.num}
 
 defaults:
@@ -19,6 +19,10 @@ defaults:
 debug: false
 num_debug_samples: 10
 
+model:
+  _target_: models.trmisr.TransformerMISR_DoubleConvDecoder
+  in_channels: 3
+
 train_dataset:
   _target_: data.datasets.dataset.MISRDataset
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/train_manifest.json
@@ -27,8 +31,7 @@ train_dataset:
     - 256
     - 256
   scale_factor: 4
-  num_lr_images: 10
-  alignment_corruption_coeff: 1.5  # 1.5 5.0 10.0
+  num_lr_images: 8
   samples_per_scene: 10
   augment_cfg:
     # RandomGamma:
@@ -46,8 +49,7 @@ val_dataset:
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/dev_manifest.json
   color_mode: ycbcr
   num_lr_images: 8 
-  samples_per_scene: 5
-  alignment_corruption_coeff: 1.5
+  samples_per_scene: 10
   hq_size:
     - 256
     - 256
@@ -56,7 +58,7 @@ val_dataset:
 dataloader:
   _target_: torch.utils.data.DataLoader
   batch_size: 24
-  num_workers: 4
+  num_workers: 2
   shuffle: true
   pin_memory: true
 
@@ -67,7 +69,7 @@ optimizer:
 loss:
   _target_: losses.combined_perceptual.HuberSobelSSIMLoss
   w_huber: 1.0
-  w_sobel: 0.6
-  w_ssim: 0.1
+  w_sobel: 0.65 
+  w_ssim: 0.15
   huber_delta: 0.1
   grayscale: False
