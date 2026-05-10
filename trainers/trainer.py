@@ -72,7 +72,8 @@ class BasicTrainer(Trainer):
         for key in keys:
             values = [o[key] for o in outputs if key in o]
             if values:
-                avg_val = torch.stack(values).float().mean()
+                values = [x.reshape(-1) for x in values]
+                avg_val = torch.cat(values).float().mean()
                 metrics[f"Val_Epoch/{key}"] = avg_val
 
         # report lr
