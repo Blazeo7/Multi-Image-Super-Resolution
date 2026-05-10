@@ -1,15 +1,19 @@
-max_epochs: 12
+max_epochs: 400
 max_steps: -1
 gradient_accumulation_steps: 1
-validation_interval: 1
+validation_interval: 2
 max_patience: 5
 save_max_score: false
-chkpt_interval: 1
+chkpt_interval: 2
 ckpt_dir: checkpoints
 resume_from: null
-step_on_batch: true
+step_on_batch: false
 
 scheduler:
-  _target_: torch.optim.lr_scheduler.StepLR
-  step_size: 10
-  gamma: 0.9
+  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+  mode: min
+  factor: 0.90
+  patience: 3
+  threshold_mode: rel
+  cooldown: 2
+  min_lr: 1e-6

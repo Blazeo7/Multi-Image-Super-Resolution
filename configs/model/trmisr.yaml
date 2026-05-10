@@ -6,6 +6,8 @@ mha_heads: 8
 ffn_hidden_dim: 128
 num_residual_blocks: 2
 in_channels: 3
+decoder_kernel_size: 1
+decoder_padding: 0
 
 param_group_lrs:
   encoder: 1e-3

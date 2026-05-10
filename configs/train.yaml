@@ -1,13 +1,13 @@
-exp_name: trmisr
-run_name: 5_lr
+exp_name: trmisr_ycbcr
+run_name: combination_resume
 
 hydra:
   job:
     chdir: True
   run:
-    dir: outputs/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+    dir: outputs/${run_name}_${now:%Y-%m-%d_%H-%M-%S}
   sweep:
-    dir: multirun/${exp_name}_${now:%Y-%m-%d_%H-%M-%S}
+    dir: multirun/${run_name}_${now:%Y-%m-%d_%H-%M-%S}
     subdir: ${hydra.job.num}
 
 defaults:
@@ -16,15 +16,20 @@ defaults:
   - model: trmisr
   - _self_ # options from this file
 
+debug: false
+num_debug_samples: 10
+
 train_dataset:
   _target_: data.datasets.dataset.MISRDataset
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/train_manifest.json
+  color_mode: ycbcr
   hq_size:
     - 256
     - 256
   scale_factor: 4
-  num_lr_images: 5
-  samples_per_scene: 5
+  num_lr_images: 10
+  alignment_corruption_coeff: 1.5  # 1.5 5.0 10.0
+  samples_per_scene: 10
   augment_cfg:
     # RandomGamma:
     #   gamma_limit: [ 95, 105 ]
@@ -39,8 +44,10 @@ train_dataset:
 val_dataset:
   _target_: data.datasets.dataset.MISRDataset
   manifest_path: /pub/users/xnguye28/knn-sr/data/manifests/synth/dev_manifest.json
-  num_lr_images: 5
+  color_mode: ycbcr
+  num_lr_images: 8 
   samples_per_scene: 5
+  alignment_corruption_coeff: 1.5
   hq_size:
     - 256
     - 256
@@ -48,17 +55,27 @@ val_dataset:
 
 dataloader:
   _target_: torch.utils.data.DataLoader
-  batch_size: 1 
+  batch_size: 24
   num_workers: 4
   shuffle: true
   pin_memory: true
 
 optimizer:
   _target_: torch.optim.AdamW
+  lr: 1e-3
 
 loss:
+<<<<<<< Updated upstream
   # _target_: torch.nn.MSELoss
 
   _target_: losses.TRMISRLoss
   max_shift: 0 # maximum tolerable misalignment (in pixels) for the loss to consider
   loss_type: "l2" # options: "l1", "l2"
+=======
+  _target_: losses.combined_perceptual.HuberSobelSSIMLoss
+  w_huber: 1.0
+  w_sobel: 0.6
+  w_ssim: 0.1
+  huber_delta: 0.1
+  grayscale: False
+>>>>>>> Stashed changes

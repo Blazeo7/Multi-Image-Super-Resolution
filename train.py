@@ -2,6 +2,7 @@ import random
 
 import hydra
 import numpy as np
+import torch
 from accelerate import Accelerator
 from omegaconf import DictConfig
 from torch.utils.data import Subset
@@ -12,6 +13,8 @@ from trainers import BasicTrainer as Trainer
 
 random.seed(42)
 np.random.seed(42)
+
+torch.cuda.empty_cache()
 
 
 @hydra.main(config_path="configs", config_name="train", version_base=None)

@@ -3,10 +3,18 @@ paths:
   vizulization_dir: "visualizations"
 
 visualization:
+<<<<<<< Updated upstream
   num_samples: 5
   type: "metric" # Supported types: "metric", "in_order", "random"
   order_by_metric: "cpsnr" # Metric to order by if type is "metric"
   order_descending: true # Highest first if true, lowest first if false
+=======
+  num_samples: 20
+  type: "random" # Supported types: "metric", "in_order", "random"
+  order_by_metric: "psnr" # Metric to order by if type is "metric"
+  order_descending: true # Whether to order by metric in descending order
+  color_mode: ycbcr
+>>>>>>> Stashed changes
 
   lr_show: 4 # number of LR images to show in the vizualization
   lr_select: "random" # method to select LR images for vizualization: "first" or "random"
